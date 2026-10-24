@@ -3,7 +3,7 @@
 Status as of 2026-10-24.
 
 ## Summary
-SpacetimeDB is the project's sole authoritative state store, and **document storage works locally**, following the revised implementation brief (SpacetimeDB edition). The smoke test passes 14/14 against `http://localhost:3000`, database `accrual-docs`. Matthew's control-plane handlers work end to end through our adapter, and his code is unchanged. Setup and handoff details are in [SPACETIMEDB_DOCUMENT_STORAGE_SETUP.md](SPACETIMEDB_DOCUMENT_STORAGE_SETUP.md).
+SpacetimeDB is the project's sole authoritative state store. The upstream document-storage implementation reported 14/14 local smoke checks against `http://localhost:3000`, database `accrual-docs`. The application now uses Python API stubs, and the separate control-plane package and its adapter have been removed. The storage suite now has 13 direct repository checks; it has been typechecked but has not been rerun against a live database during this integration. Setup details are in [SPACETIMEDB_DOCUMENT_STORAGE_SETUP.md](SPACETIMEDB_DOCUMENT_STORAGE_SETUP.md).
 
 ## How we got here
 1. **Database choice.** The original brief named Convex. The team chose **SpacetimeDB** as the single datastore, and the brief was later revised to match. We rejected splitting the work between Convex for files and SpacetimeDB for data.
@@ -12,7 +12,7 @@ SpacetimeDB is the project's sole authoritative state store, and **document stor
 4. **Alignment with the control plane** (Matthew's commit 1d87f4d), **without changing his files**:
    - we adopted his document types (`LEDGER`, `ACCRUAL`) and his 10 MiB limit
    - we added `backend/db/repositories/data_plane.ts`, which implements his `DataPlane` port
-5. **Realignment with the revised brief** (current state). The brief now specifies the process boundaries, and we followed them exactly:
+5. **Realignment with the revised brief** (database implementation). The brief now specifies the process boundaries, and we followed them exactly:
 
    | Brief (p.2-3) | Now |
    |---|---|
@@ -25,18 +25,20 @@ SpacetimeDB is the project's sole authoritative state store, and **document stor
    | Bind all operations to the fixed demo company | Reducers and the adapter reject any other `companyId` |
    | (not in brief) `document_text` | Removed |
 
-   Matthew's `StoredFile { storageKey, contentHash, byteLength, mediaType }` and `CompanySettings` already matched the revised brief, so his code needed no change. We also implemented `settings.get`.
+   At that stage, Matthew's `StoredFile { storageKey, contentHash, byteLength, mediaType }` and `CompanySettings` already matched the revised brief, so his code needed no change. We also implemented `settings.get`.
+
+6. **Python MVP API.** Removed the separate control plane and its storage adapter. Four Python routes now validate inputs and return explicit 501 errors until their backend functions are implemented. API success contracts are documented separately. The API runs in Docker with dependencies installed using uv; other service containers and Python database integration remain pending.
 
 ## Current state
 | Area | Result |
 |---|---|
 | Module | 4 private tables (`documents`, `settings`, `service_identity`, `module_owner`), 4 reducers, 3 views |
 | File store | `backend/db/repositories/file_store.ts`: atomic, content-addressed writes; every read is re-hashed and size-checked |
-| Node API | `documents.ts` (upload, version, get, read, list, history, duplicate lookup, verify), `client.ts` (`connectService('gateway' \| 'worker')`), `data_plane.ts` (`imports.upload`, `evidence.readDocument`, `settings.get`) |
+| Node API | `documents.ts` (upload, version, get, read, list, history, duplicate lookup, verify), `client.ts` (`connectService('gateway' \| 'worker')`) |
 | Scripts | `db:start`, `db:install`, `db:publish`, `db:reset`, `db:generate`, `db:sql`, **`db:bootstrap`**, `db:seed`, `smoke` and `typecheck`, all driven by environment variables |
 | Seed | 6 synthetic Acme documents (contract, amendment, timesheet, invoices, ledger, accrual) plus timesheet v2, uploaded via the gateway. Idempotent |
-| Smoke | 14/14 checks pass:<br>• storage on the file store, verified reads, and tamper detection<br>• metadata validation<br>• gateway-only writes, owner-only configuration, and views hidden from unregistered clients<br>• idempotent retries, versioning, and list filters<br>• control-plane upload, read and settings, a 10 MiB upload, and the adapter's rejections |
-| Matthew's tests | 6/6 pass (they need Node 22.18+, or `--experimental-strip-types`) |
+| Smoke | 13 direct repository checks covering storage, integrity, access rules, versioning, settings and the 10 MiB limit. Typechecked; live database execution pending after control-plane removal. |
+| Python API tests | 7 checks cover all four stub routes, validation, upload limits and documented success/error responses; run in process and over HTTP against Docker. |
 
 ## Learned about SpacetimeDB 2.13 (TypeScript)
 - Reducers are transactional and deterministic, and **they return no data**. The gateway reads results through its view subscription, so the repository waits for the row identified by `upload_key`.
@@ -47,5 +49,5 @@ SpacetimeDB is the project's sole authoritative state store, and **document stor
 
 ## Open items for the team
 - **Next phases:** follow the brief's backend contract on p.4. That covers `finalize_import`, `start_review`, `claim_job`, `heartbeat_job`, `complete_job`, `ask_question`, `resolve_exception`, `build_proposal`, `decide_review`, `authorize_export`, `finalize_export`, and the scheduled sweep reducer. Every reducer checks its caller, and every table stays private behind views.
-- **The worker lease flow:** the brief's "subscribed workers compete through atomic `claim_job`" fits Matthew's `worker.claim(jobId)` as it stands, so his code doesn't need to change.
+- **The worker lease flow:** implement subscribed Python workers competing through atomic `claim_job`, with heartbeat and completion reducers. This workflow is still pending.
 - **Leftover database:** an earlier experimental database `accrual` still exists on the original dev machine. Remove it with `spacetime delete accrual --server local`.

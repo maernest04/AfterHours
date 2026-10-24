@@ -10,6 +10,15 @@ coverage/
 __pycache__/
 *.py[cod]
 .pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.hypothesis/
+.uv-cache/
+.coverage
+.coverage.*
+htmlcov/
+*.egg-info/
+__pypackages__/
 *.log
 
 # SpacetimeDB local tokens

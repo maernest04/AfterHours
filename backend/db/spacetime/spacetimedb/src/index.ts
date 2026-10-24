@@ -9,7 +9,7 @@ export default spacetimedb;
 
 type Ctx = ReducerCtx<InferSchema<typeof spacetimedb>>;
 
-// Matches DocumentType and parameterLimits in backend/control_plane.
+// Shared document types and upload limits for document storage.
 const DOCUMENT_TYPES = ['ACCRUAL', 'CONTRACT', 'AMENDMENT', 'TIMESHEET', 'INVOICE', 'LEDGER', 'OTHER'];
 const MEDIA_TYPES = ['text/csv', 'application/json', 'text/plain', 'application/pdf'];
 const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;

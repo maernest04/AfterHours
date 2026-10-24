@@ -30,20 +30,22 @@ npm run db:generate       # regenerate TypeScript bindings
 npm run typecheck
 npm run db:bootstrap      # owner: configure company + register gateway/worker identities (safe to re-run)
 npm run db:seed           # synthetic documents via the gateway identity (safe to re-run)
-npm run smoke             # expect: 14/14 checks passed
+npm run smoke             # expect: 13/13 checks passed
 ```
 
-**Done when:** `npm run smoke` ends with `14/14 checks passed`, and `npm run db:sql` lists document rows for `DEMO-ACME-2026-09`.
+**Done when:** `npm run smoke` ends with `13/13 checks passed`, and `npm run db:sql` lists document rows for `DEMO-ACME-2026-09`.
 
 ---
 
 ## 1. Architecture (brief p.2-3, documents only)
 
+The current application direction is Python services in local Docker containers. The brief quotes below describe the original Node/Next.js design; the existing database module and storage tooling remain TypeScript. Python integration is not implemented yet.
+
 ```text
-Browser ──► Next.js server gateway (control plane) ──► SpacetimeDB (private tables, reducers check caller)
+Browser ──► Python API (integration pending) ──► SpacetimeDB (private tables, reducers check caller)
                  │  server-held GATEWAY identity              ▲ public views filter by ctx.sender
                  └─► file store (persistent volume)           │
-Node worker (separate WORKER identity) ──── reads views ──────┘ + reads file store
+Python worker (planned; WORKER identity) ──── reads views ──────┘ + reads file store
 ```
 
 | Brief requirement | Implementation |
@@ -53,7 +55,7 @@ Node worker (separate WORKER identity) ──── reads views ─────�
 | "A Node worker connects with a separate approved service identity" | The `WORKER` identity (`backend/.secrets/worker.token`). It can read the views but **can't write** documents. |
 | "Reducers check the caller and atomically validate state changes" | `store_document*` accept only `GATEWAY`. `configure_settings` and `register_service_identity` accept only the owner. |
 | "Original files … live on a persistent server volume … referenced by storageKey and hash" | Content-addressed file store at `FILE_STORE_DIR` (default `data/files/`). `storageKey = "sha256/<contentHash>"`, and every read is re-hashed. |
-| "Every business record belongs to the fixed demo company; the backend rejects other company IDs" | `settings.companyId` (default `demo`). Every reducer and the adapter reject any other company. |
+| "Every business record belongs to the fixed demo company; the backend rejects other company IDs" | `settings.companyId` (default `demo`). Company-scoped reducers reject any other company. |
 | "Index companyId, caseId and job status for view lookups" | `documents.companyId` is indexed. `caseId` and job status come with later phases. |
 | "Preserve source versions" | New versions are new rows linked by `supersedes_document_id`. Rows are never updated or deleted. |
 
@@ -107,7 +109,7 @@ All variables are optional. To override them, run `Copy-Item .env.example .env`;
 |---|---|---|
 | `SPACETIMEDB_URI` | `http://localhost:3000` | SpacetimeDB server |
 | `SPACETIMEDB_DATABASE` | `accrual-docs` | Database name. Lowercase letters, digits and dashes; **no underscores** |
-| `COMPANY_ID` | `demo` | Fixed demo company set by `db:bootstrap`. Must match the control plane's `context.companyId` |
+| `COMPANY_ID` | `demo` | Fixed demo company set by `db:bootstrap`. Must match the company configured for backend services |
 | `FILE_STORE_DIR` | `<repo>/data/files` | Persistent volume for original files (git-ignored) |
 | `SPACETIMEDB_SECRETS_DIR` | `<repo>/backend/.secrets` | Gateway and worker identity tokens (git-ignored) |
 | `SPACETIME_BIN` | auto-detected | Path to the `spacetime` executable if it isn't on PATH |
@@ -129,7 +131,7 @@ npm run db:bootstrap   # as owner: configure_settings + register GATEWAY and WOR
 
 ```powershell
 npm run db:seed    # 6 synthetic Acme documents + v2 of the timesheet under reference DEMO-ACME-2026-09
-npm run smoke      # 14 checks; exit code 1 on any failure
+npm run smoke      # 13 checks; exit code 1 on any failure
 npm run db:sql                                                       # id, type, version, reference_id (owner query)
 npm run db:sql -- "SELECT id, type, storage_key, byte_length FROM documents"
 ```
@@ -160,10 +162,10 @@ The smoke test uses a fresh `SMOKE-xxxxxxxx` reference each run, so it can run r
   - v2 is stored without changing v1
   - versioning a superseded document or uploading identical content is rejected
   - list filters work
-- **Control plane:**
-  - `imports.upload`, `evidence.readDocument` and `settings.get` work through Matthew's real API handlers
-  - a 10 MiB upload is accepted
-  - the adapter rejects other companies, documents from another case, and operations that aren't built yet
+- **Repository access:**
+  - ledger upload and read return identical bytes and expected metadata
+  - the gateway can read the configured company settings
+  - a 10 MiB upload is accepted at the repository limit
 
 ## 7. Schema (the document-storage contract)
 
@@ -175,10 +177,10 @@ All tables are **private**. Clients read through views (§8). Only the owner can
 | `id` | u64, primary key, auto-increment | |
 | `company_id` | string, btree index | Always `settings.company_id` |
 | `storage_key` | string | `sha256/<content_hash>`, a file-store reference |
-| `type` | string, btree index | `ACCRUAL`, `CONTRACT`, `AMENDMENT`, `TIMESHEET`, `INVOICE`, `LEDGER` or `OTHER` (same list as the control plane's `DocumentType`) |
+| `type` | string, btree index | `ACCRUAL`, `CONTRACT`, `AMENDMENT`, `TIMESHEET`, `INVOICE`, `LEDGER` or `OTHER` |
 | `version` | u32 | 1, 2, 3 and so on |
 | `content_hash` | string, btree index | Lowercase SHA-256 hex |
-| `byte_length` | u32 | Up to 10 MiB (the control plane's `maxUploadBytes`) |
+| `byte_length` | u32 | Up to 10 MiB (repository upload limit) |
 | `media_type` | string | `text/csv`, `application/json`, `text/plain` or `application/pdf` |
 | `original_filename` | string | |
 | `reference_id` | option\<string\> | Optional case or reference link |
@@ -213,12 +215,11 @@ Reducers are transactional and **return no data**. A call resolves on success an
 | `settings_view` | The settings row, to registered identities only |
 | `my_service_identity` | The caller's own role (empty if unregistered), so services can check themselves at startup |
 
-**The Node API (`backend/db/repositories/`)** is what the gateway and worker should use:
+**The existing Node storage API (`backend/db/repositories/`)** supports the seed and smoke tools. Python service integration is pending:
 
 ```ts
 import { connectService } from './backend/db/repositories/client';
 import * as docs from './backend/db/repositories/documents';
-import { createSpacetimeDataPlane } from './backend/db/repositories/data_plane';
 
 const { conn } = await connectService('gateway');         // or 'worker' (read-only); fails fast if not bootstrapped
 const doc = await docs.uploadDocument(conn, { companyId, bytes, originalFilename, mediaType, type: 'INVOICE', referenceId, sourceLabel });
@@ -226,16 +227,9 @@ const v2  = await docs.addDocumentVersion(conn, doc.id, { companyId, bytes: newB
 docs.getDocument(conn, id);  docs.readDocument(conn, id);   // readDocument returns hash-verified bytes from the file store
 docs.listDocuments(conn, { type: 'TIMESHEET', referenceId, latestOnly: true });
 docs.getVersionHistory(conn, anyVersionId);  docs.findByContentHash(conn, hash);  docs.verifyDocument(conn, id);
-
-const dataPlane = createSpacetimeDataPlane(conn);          // for backend/control_plane handlers
 ```
 
-| Control-plane operation | Status |
-|---|---|
-| `imports.upload` | Done |
-| `evidence.readDocument` | Done. A document whose `reference_id` is set must match `caseId` |
-| `settings.get` | Done |
-| All other operations | Return `DATA_PLANE_UNAVAILABLE` (503) until later phases |
+The former control-plane package and its adapter have been removed. The four Python API stubs (`create-review`, `list-review`, `get-review`, `export-review`) still need integration with storage and workflow functions. See [API contracts](../backend/api/README.md).
 
 ## 9. Repository layout (database parts)
 
@@ -250,11 +244,9 @@ backend/db/bindings/                                 generated client bindings (
 backend/db/repositories/client.ts                    connect / connectService / ownerToken / waitFor
 backend/db/repositories/file_store.ts                content-addressed file store (putFile / getFile)
 backend/db/repositories/documents.ts                 document API (§8)
-backend/db/repositories/data_plane.ts                DataPlane adapter for backend/control_plane
 backend/db/seed/bootstrap.ts                         owner setup: settings + service identities
 backend/db/seed/seed.ts, seed/documents/*            synthetic seed data
 backend/db/test/smoke.ts                             smoke test
-backend/control_plane/                               request validation + DataPlane port (Matthew; unchanged by this layer)
 data/files/                                          local file store (git-ignored)
 backend/.secrets/                                    gateway/worker tokens (git-ignored)
 ```
@@ -271,7 +263,6 @@ backend/.secrets/                                    gateway/worker tokens (git-
 | `File … is missing from the file store` | The metadata exists but `FILE_STORE_DIR` points somewhere else, or the files were deleted. The gateway and worker must share the same volume. |
 | Publish fails with a breaking-change error | `npm run db:reset`, then `db:bootstrap` and `db:seed`. |
 | TypeScript errors about missing reducers or views | Stale bindings. Run `npm run db:generate`. |
-| `backend/control_plane` tests fail on Node < 22.18 | Run `node --experimental-strip-types --test control_plane.test.mjs` from that folder. |
 | `npm` is blocked by the PowerShell execution policy | `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`, or run `npm.cmd`. |
 | Inspect server-side errors | `spacetime logs accrual-docs --server local -n 50`. `ERROR` lines after a smoke run are expected: they come from its deliberate rejection checks. |
 
@@ -282,13 +273,13 @@ backend/.secrets/                                    gateway/worker tokens (git-
 - **Don't change the §7 `documents` columns or the §8 reducer signatures.** Extend them instead. Facts, cases and so on should reference `documents.id`. The brief's "documents / facts" record puts `documentId, pageOrRow, excerpt, field, value, validationStatus` in a new `facts` table.
 - **Files:** export CSVs go to the same file store with `putFile` (brief p.2/p.4: "storageKey and hash"). Never store bytes in SpacetimeDB.
 - **The worker** connects with `connectService('worker')`. It reads `documents_view` plus the file store and is never allowed to call the document-writing or approval reducers.
-- **The control plane:** add a handler per operation in `data_plane.ts`, plus a smoke check. Don't edit `backend/control_plane/`; that's Matthew's code.
+- **Python backend integration:** connect the existing API stubs to backend workflow functions and storage while preserving service identities, caller checks and company checks. Add integration checks when those functions are implemented.
 - **After a module change,** run `db:publish` (or `db:reset` followed by `db:bootstrap`), then `db:generate`, `typecheck` and `smoke`, and commit the regenerated bindings.
 
 ## 12. Checklist for a coding agent picking this up
 
-1. Run §0. Stop and report if `npm run smoke` isn't 14/14.
+1. Run §0. Stop and report if `npm run smoke` isn't 13/13.
 2. Read the brief and `backend/db/spacetime/CLAUDE.md` before changing the module. Reducers are deterministic, return nothing, and must check `ctx.sender`.
 3. Keep tables private, read through views, and keep file bytes on the file store.
-4. Don't modify `backend/control_plane/`, the §7 columns, or the §8 reducer signatures.
+4. Don't modify the §7 columns or the §8 reducer signatures; extend them for new phases.
 5. Keep all demo data synthetic and labeled `(SYNTHETIC)`.

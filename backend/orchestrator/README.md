@@ -11,6 +11,8 @@ task-specific logic.
 Suggested run states: `queued`, `running`, `succeeded`, `failed`, `cancelled`.
 Define valid transitions when implementation begins.
 
-Accept validated requests from the control plane, dispatch ready tasks, and
+Accept validated requests from the Python API handlers, dispatch ready tasks, and
 persist status/results using database repositories. Plan for duplicate task
 delivery, recovery after restarts, and cancellation of in-flight work.
+
+Implement the orchestrator in Python and run it in a local Docker container.

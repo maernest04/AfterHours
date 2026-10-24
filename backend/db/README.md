@@ -15,9 +15,8 @@ The current phase covers **document storage only**.
   - `client.ts`: service connections
   - `file_store.ts`: file storage
   - `documents.ts`: the document API
-  - `data_plane.ts`: implements the control plane's `DataPlane` port
 - `seed/`: `bootstrap.ts` does the owner setup (settings and service identities); `seed.ts` loads the synthetic documents.
 - `test/`: the end-to-end smoke test (`npm run smoke`).
 - `models/`, `migrations/`: unused. In SpacetimeDB, the schema lives in the module and migrations happen on publish.
 
-Other backend components (control plane, agents) call `repositories/` rather than the generated bindings directly.
+The application backend uses Python; integration with this TypeScript storage tooling is still pending. The Python API lives in `backend/api/` and currently returns explicit 501 stub errors. Each application service will run in its own local Docker container; database container configuration is still pending.
