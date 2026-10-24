@@ -1,11 +1,16 @@
-"""Typed integration seams; only summary listing has a complete implementation."""
+"""Review imports and persisted snapshots; export awaits email approval integration."""
 
 import base64
+import asyncio
 import binascii
+import re
 from dataclasses import dataclass
-from typing import BinaryIO, Iterator, Sequence
+from typing import AsyncIterator, BinaryIO, Sequence
+
+from starlette.concurrency import run_in_threadpool
 
 from .repository import ReviewRepository, SDKReviewRepository
+from .imports import prepare_import
 from .responses import CreateReviewResponse, GetReviewResponse, ListReviewResponse
 
 
@@ -58,10 +63,7 @@ class ReviewService:
         self.repository = repository
 
     def create_review(self, files: Sequence[ReviewUpload]) -> CreateReviewResponse:
-        # TODO: infer trusted document types/accrual metadata, generate a server-side
-        # import key, persist uploads + import, then durably schedule start_review.
-        # Until the whole acceptance path exists, perform no partial writes.
-        raise IntegrationPending("create-review")
+        return self.repository.create_review(prepare_import(files))
 
     def list_reviews(self, *, limit: int = 10, cursor: str | None = None) -> ListReviewResponse:
         if not 1 <= limit <= 10:
@@ -76,14 +78,32 @@ class ReviewService:
         )
 
     def get_review(self, review_id: str) -> GetReviewResponse:
-        # TODO: join current proposal/evidence/email history with a consistent sequence.
-        # A case row alone cannot represent this response faithfully.
-        raise IntegrationPending("get-review")
+        if not re.fullmatch(r'[1-9][0-9]{0,19}', review_id) or int(review_id) >= 2**64:
+            raise InvalidCursor('review_id must be a positive decimal case ID.')
+        return self.repository.get_review(int(review_id))
 
-    def stream_review(self, review_id: str, after_sequence: str | None = None) -> Iterator[bytes]:
-        # TODO: consistent snapshot + resume-aware updates, with disconnect cleanup.
-        # Raise before starting a stream so the client receives an actual HTTP 501.
-        raise IntegrationPending("get-review")
+    def stream_review(self, review_id: str, after_sequence: str | None = None) -> AsyncIterator[bytes]:
+        if after_sequence is not None and not re.fullmatch(r'v1:[0-9a-f]{64}', after_sequence):
+            raise InvalidCursor('Invalid review update cursor.')
+        # Resolve not-found/storage errors before StreamingResponse sends HTTP 200.
+        snapshot = self.get_review(review_id)
+
+        async def events():
+            current = snapshot
+            yield f'id: {current.sequence}\nevent: snapshot\ndata: {current.model_dump_json()}\n\n'.encode()
+            # This is latest-state resynchronization, not durable event replay.
+            # Each poll closes its SDK connection before yielding. StreamingResponse
+            # cancels this generator on disconnect; no subscription remains open.
+            while True:
+                await asyncio.sleep(1)
+                updated = await run_in_threadpool(self.get_review, review_id)
+                if updated.sequence != current.sequence:
+                    current = updated
+                    yield f'id: {current.sequence}\nevent: review.updated\ndata: {current.model_dump_json()}\n\n'.encode()
+                else:
+                    yield b': keep-alive\n\n'
+
+        return events()
 
     def export_review(self, review_id: str) -> ReviewCSV:
         # TODO: require current revision/hash-bound email approval and no blockers.

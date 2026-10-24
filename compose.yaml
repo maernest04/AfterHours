@@ -1,4 +1,36 @@
 services:
+  pipeline:
+    profiles: ["pipeline"]
+    build:
+      context: .
+      dockerfile: backend/agents/Dockerfile
+    command: ["afterhours-orchestrate"]
+    environment:
+      # Droid's investigation SDK writes session/cache files under its home.
+      HOME: /tmp
+      SPACETIMEDB_URI: http://spacetimedb:3000
+      SPACETIMEDB_DATABASE: ${SPACETIMEDB_DATABASE:-accrual-docs}
+      COMPANY_ID: ${COMPANY_ID:-demo}
+      SPACETIMEDB_SECRETS_DIR: /run/afterhours
+      FILE_STORE_DIR: /app/data/files
+      FACTORY_API_KEY: ${FACTORY_API_KEY:-}
+      FACTORY_MODEL_ID: ${FACTORY_MODEL_ID:-}
+      MATCHING_TIMEOUT_SECONDS: ${MATCHING_TIMEOUT_SECONDS:-120}
+      INVESTIGATION_TIMEOUT_SECONDS: ${INVESTIGATION_TIMEOUT_SECONDS:-180}
+    volumes:
+      - ./backend/.secrets/gateway.token:/run/afterhours/gateway.token:ro
+      - ./backend/.secrets/worker.token:/run/afterhours/worker.token:ro
+      - ./data/files:/app/data/files:ro
+    depends_on:
+      spacetimedb:
+        condition: service_healthy
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+
   approval-demo:
     profiles: ["approval-demo"]
     build: ./backend/approval_watcher
@@ -54,8 +86,10 @@ services:
       SPACETIMEDB_DATABASE: ${SPACETIMEDB_DATABASE:-accrual-docs}
       COMPANY_ID: ${COMPANY_ID:-demo}
       SPACETIMEDB_SECRETS_DIR: /run/afterhours
+      FILE_STORE_DIR: /app/data/files
     volumes:
       - ./backend/.secrets/gateway.token:/run/afterhours/gateway.token:ro
+      - ./data/files:/app/data/files
     depends_on:
       spacetimedb:
         condition: service_healthy

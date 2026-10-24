@@ -17,15 +17,12 @@ class ReviewApiTests(unittest.IsolatedAsyncioTestCase):
     async def asyncTearDown(self):
         await self.client.aclose()
 
-    async def test_create_review_combines_upload_and_start(self):
+    async def test_create_rejects_unclassified_csv(self):
         response = await self.client.post('/create-review', files=[('files', ('accrual.csv', b'amount\n7000\n', 'text/csv'))])
-        self.assertEqual(response.status_code, 501)
-        self.assertEqual(response.json()['detail']['operation'], 'create-review')
+        self.assertEqual(response.status_code, 422)
 
-    async def test_remaining_operations_are_explicit_stubs(self):
+    async def test_export_remains_an_explicit_stub(self):
         requests = [
-            ('/get-review', {'review_id': 'review-1'}),
-            ('/get-review', {'review_id': 'review-1', 'live': 'true', 'after_sequence': '1'}),
             ('/export-review', {'review_id': 'review-1'}),
         ]
         for path, params in requests:
@@ -60,7 +57,7 @@ class ReviewApiTests(unittest.IsolatedAsyncioTestCase):
     async def test_multiple_files_and_combined_upload_size(self):
         files = [('files', ('ledger.csv', b'posted\n7000', 'text/csv')),
                  ('files', ('contract.txt', b'Rate: 110/hour', 'text/plain'))]
-        self.assertEqual((await self.client.post('/create-review', files=files)).status_code, 501)
+        self.assertEqual((await self.client.post('/create-review', files=files)).status_code, 422)
         large = b'x' * (6 * 1024 * 1024)
         response = await self.client.post('/create-review', files=[
             ('files', ('first.txt', large, 'text/plain')),
@@ -81,12 +78,8 @@ class ReviewApiTests(unittest.IsolatedAsyncioTestCase):
                 content = responses[status]['content']['application/json']
                 self.assertIn('$ref', content['schema'])
                 self.assertIn('example', content)
-                if path == '/list-review':
-                    self.assertIn('503', responses)
-                    self.assertNotIn('501', responses)
-                else:
-                    self.assertIn('501', responses)
-                    self.assertNotIn('success', responses['501']['description'].lower())
+                self.assertIn('503', responses)
+                self.assertNotIn('501', responses)
         live = document['paths']['/get-review']['get']['responses']['200']['content']['text/event-stream']
         self.assertIn('event: snapshot', live['example'])
         self.assertIn('event: review.updated', live['example'])

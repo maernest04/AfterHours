@@ -1,0 +1,19 @@
+[build-system]
+requires = ["hatchling>=1.26,<2"]
+build-backend = "hatchling.build"
+
+[project]
+name = "afterhours-orchestrator"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = ["afterhours-agents", "afterhours-db"]
+
+[project.scripts]
+afterhours-orchestrate = "afterhours_orchestrator.cli:main"
+
+[tool.uv.sources]
+afterhours-db = { path = "../db", editable = true }
+afterhours-agents = { path = "../agents", editable = true }
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/afterhours_orchestrator"]

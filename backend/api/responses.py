@@ -23,7 +23,7 @@ class ResponseModel(BaseModel):
 class CreateReviewResponse(ResponseModel):
     review_id: str = Field(min_length=1, description="Generated and persisted by the data plane.")
     idempotency_key: str = Field(min_length=1, description="Generated and persisted by the data plane; not a request field.")
-    status: Literal["IMPORTED"]
+    status: Literal["IMPORTED"] = Field(description="Import acceptance milestone; get-review returns the current processing state.")
 
 
 class ReviewSummary(ResponseModel):
@@ -66,7 +66,7 @@ class ReviewHistoryItem(ResponseModel):
 
 
 class GetReviewResponse(ReviewSummary):
-    sequence: str = Field(description="Opaque update cursor; also used as the SSE event id.")
+    sequence: str = Field(description="Stable opaque snapshot hash; also used as the SSE event id. Resume sends current state, without historical event replay.")
     input_revision: int = Field(ge=0)
     currency: Literal["USD"]
     original_status: Literal["DRAFT", "POSTED"] | None
@@ -82,14 +82,14 @@ class GetReviewResponse(ReviewSummary):
     blockers: list[str]
 
 
-CREATE_EXAMPLE = {"review_id": "review-1", "idempotency_key": "generated-key-1", "status": "IMPORTED"}
+CREATE_EXAMPLE = {"review_id": "1", "idempotency_key": "generated-key-1", "status": "IMPORTED"}
 SUMMARY_EXAMPLE = {
-    "review_id": "review-1", "status": "APPROVED",
+    "review_id": "1", "status": "READY_FOR_REVIEW",
     "created_at": "2026-10-23T18:00:00Z", "updated_at": "2026-10-23T18:10:00Z",
 }
 LIST_EXAMPLE = {"items": [SUMMARY_EXAMPLE], "next_cursor": None}
 GET_EXAMPLE = {
-    **SUMMARY_EXAMPLE, "sequence": "12", "input_revision": 1, "currency": "USD",
+    **SUMMARY_EXAMPLE, "sequence": "v1:" + "a" * 64, "input_revision": 1, "currency": "USD",
     "original_status": "POSTED", "original_amount_cents": "700000",
     "corrected_target_cents": "770000", "difference_cents": "70000", "export_amount_cents": "70000",
     "proposal_id": "proposal-1", "proposal_hash": "sha256:example",
@@ -103,14 +103,12 @@ GET_EXAMPLE = {
     ],
     "evidence": [{"evidence_id": "evidence-1", "document_id": "amendment-1",
                   "page_or_row": "page 1", "excerpt": "Approved rate: $110/hour for the 70 unbilled hours."}],
-    "history": [{"timestamp": "2026-10-23T18:10:00Z", "action": "APPROVED",
-                 "actor": "reviewer@example.test", "email_id": "email-1",
-                 "summary": "Approved proposal-1 by email.", "evidence_ids": ["evidence-1"]}],
+    "history": [],
     "blockers": [],
 }
 SSE_EXAMPLE = (
-    f'id: 12\nevent: snapshot\ndata: {json.dumps(GET_EXAMPLE)}\n\n'
-    f'id: 13\nevent: review.updated\ndata: {json.dumps({**GET_EXAMPLE, "sequence": "13", "status": "EXPORTED"})}\n\n'
+    f'id: {GET_EXAMPLE["sequence"]}\nevent: snapshot\ndata: {json.dumps(GET_EXAMPLE)}\n\n'
+    f'id: v1:{"b" * 64}\nevent: review.updated\ndata: {json.dumps({**GET_EXAMPLE, "sequence": "v1:" + "b" * 64, "status": "WAITING_FOR_INPUT", "blockers": ["Source document changed"]})}\n\n'
 )
 CSV_EXAMPLE = (
     "entry_date,reference_id,account_code,account_name,debit,credit,currency,description\r\n"
