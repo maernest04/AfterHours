@@ -10,8 +10,18 @@ import {
   type Infer as __Infer,
 } from "spacetimedb";
 
+import {
+  Account,
+} from "./types";
+
 export default {
-  documentId: __t.u64(),
-  text: __t.string(),
-  extractionStatus: __t.string(),
+  companyId: __t.string(),
+  currency: __t.string(),
+  get expenseAccount() {
+    return Account;
+  },
+  get liabilityAccount() {
+    return Account;
+  },
+  policyVersion: __t.string(),
 };

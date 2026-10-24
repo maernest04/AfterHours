@@ -34,79 +34,51 @@ import {
 } from "spacetimedb";
 
 // Import all reducer arg schemas
+import ConfigureSettingsReducer from "./configure_settings_reducer";
+import RegisterServiceIdentityReducer from "./register_service_identity_reducer";
 import StoreDocumentReducer from "./store_document_reducer";
-import StoreDocumentTextReducer from "./store_document_text_reducer";
 import StoreDocumentVersionReducer from "./store_document_version_reducer";
-import VerifyStoredFileReducer from "./verify_stored_file_reducer";
 
 // Import all procedure arg schemas
 
 // Import all table schema definitions
-import DocumentTextRow from "./document_text_table";
-import DocumentsRow from "./documents_table";
-import FilesRow from "./files_table";
+import DocumentsViewRow from "./documents_view_table";
+import MyServiceIdentityRow from "./my_service_identity_table";
+import SettingsViewRow from "./settings_view_table";
 
 /** Type-only namespace exports for generated type groups. */
 
 /** The schema information for all tables in this module. This is defined the same was as the tables would have been defined in the server. */
 const tablesSchema = __schema({
-  documentText: __table({
-    name: 'document_text',
+  documentsView: __table({
+    name: 'documents_view',
     indexes: [
-      { accessor: 'documentId', name: 'document_text_document_id_idx_btree', algorithm: 'btree', columns: [
-        'documentId',
-      ] },
     ],
     constraints: [
-      { name: 'document_text_document_id_key', constraint: 'unique', columns: ['documentId'] },
     ],
-  }, DocumentTextRow),
-  documents: __table({
-    name: 'documents',
+  }, DocumentsViewRow),
+  myServiceIdentity: __table({
+    name: 'my_service_identity',
     indexes: [
-      { accessor: 'contentHash', name: 'documents_content_hash_idx_btree', algorithm: 'btree', columns: [
-        'contentHash',
-      ] },
-      { accessor: 'docType', name: 'documents_doc_type_idx_btree', algorithm: 'btree', columns: [
-        'docType',
-      ] },
-      { accessor: 'fileId', name: 'documents_file_id_idx_btree', algorithm: 'btree', columns: [
-        'fileId',
-      ] },
-      { accessor: 'id', name: 'documents_id_idx_btree', algorithm: 'btree', columns: [
-        'id',
-      ] },
-      { accessor: 'uploadKey', name: 'documents_upload_key_idx_btree', algorithm: 'btree', columns: [
-        'uploadKey',
-      ] },
     ],
     constraints: [
-      { name: 'documents_id_key', constraint: 'unique', columns: ['id'] },
-      { name: 'documents_upload_key_key', constraint: 'unique', columns: ['uploadKey'] },
     ],
-  }, DocumentsRow),
-  files: __table({
-    name: 'files',
+  }, MyServiceIdentityRow),
+  settingsView: __table({
+    name: 'settings_view',
     indexes: [
-      { accessor: 'id', name: 'files_id_idx_btree', algorithm: 'btree', columns: [
-        'id',
-      ] },
-      { accessor: 'sha256', name: 'files_sha_256_idx_btree', algorithm: 'btree', columns: [
-        'sha256',
-      ] },
     ],
     constraints: [
-      { name: 'files_id_key', constraint: 'unique', columns: ['id'] },
     ],
-  }, FilesRow),
+  }, SettingsViewRow),
 });
 
 /** The schema information for all reducers in this module. This is defined the same way as the reducers would have been defined in the server, except the body of the reducer is omitted in code generation. */
 const reducersSchema = __reducers(
+  __reducerSchema("configure_settings", ConfigureSettingsReducer),
+  __reducerSchema("register_service_identity", RegisterServiceIdentityReducer),
   __reducerSchema("store_document", StoreDocumentReducer),
-  __reducerSchema("store_document_text", StoreDocumentTextReducer),
   __reducerSchema("store_document_version", StoreDocumentVersionReducer),
-  __reducerSchema("verify_stored_file", VerifyStoredFileReducer),
 );
 
 /** The schema information for all procedures in this module. This is defined the same way as the procedures would have been defined in the server. */

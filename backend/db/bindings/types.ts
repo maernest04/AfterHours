@@ -10,21 +10,23 @@ import {
   type Infer as __Infer,
 } from "spacetimedb";
 
-export const DocumentText = __t.object("DocumentText", {
-  documentId: __t.u64(),
-  text: __t.string(),
-  extractionStatus: __t.string(),
-  createdAt: __t.timestamp(),
+export const Account = __t.object("Account", {
+  code: __t.string(),
+  name: __t.string(),
 });
-export type DocumentText = __Infer<typeof DocumentText>;
+export type Account = __Infer<typeof Account>;
 
 export const Documents = __t.object("Documents", {
   id: __t.u64(),
-  fileId: __t.u64(),
-  docType: __t.string(),
-  referenceId: __t.option(__t.string()),
+  companyId: __t.string(),
+  storageKey: __t.string(),
+  type: __t.string(),
   version: __t.u32(),
   contentHash: __t.string(),
+  byteLength: __t.u32(),
+  mediaType: __t.string(),
+  originalFilename: __t.string(),
+  referenceId: __t.option(__t.string()),
   sourceLabel: __t.string(),
   supersedesDocumentId: __t.option(__t.u64()),
   uploadKey: __t.string(),
@@ -32,14 +34,46 @@ export const Documents = __t.object("Documents", {
 });
 export type Documents = __Infer<typeof Documents>;
 
-export const Files = __t.object("Files", {
-  id: __t.u64(),
-  originalFilename: __t.string(),
-  mimeType: __t.string(),
-  bytes: __t.byteArray(),
-  byteSize: __t.u32(),
-  sha256: __t.string(),
+export const DocumentsView = __t.object("DocumentsView", {});
+export type DocumentsView = __Infer<typeof DocumentsView>;
+
+export const ModuleOwner = __t.object("ModuleOwner", {
+  id: __t.u32(),
+  identity: __t.identity(),
+});
+export type ModuleOwner = __Infer<typeof ModuleOwner>;
+
+export const MyServiceIdentity = __t.object("MyServiceIdentity", {});
+export type MyServiceIdentity = __Infer<typeof MyServiceIdentity>;
+
+export const ServiceIdentity = __t.object("ServiceIdentity", {
+  identity: __t.identity(),
+  role: __t.string(),
+  label: __t.string(),
   createdAt: __t.timestamp(),
 });
-export type Files = __Infer<typeof Files>;
+export type ServiceIdentity = __Infer<typeof ServiceIdentity>;
+
+export const ServiceRole = __t.object("ServiceRole", {
+  role: __t.string(),
+  label: __t.string(),
+});
+export type ServiceRole = __Infer<typeof ServiceRole>;
+
+export const Settings = __t.object("Settings", {
+  id: __t.u32(),
+  companyId: __t.string(),
+  currency: __t.string(),
+  get expenseAccount() {
+    return Account;
+  },
+  get liabilityAccount() {
+    return Account;
+  },
+  policyVersion: __t.string(),
+});
+export type Settings = __Infer<typeof Settings>;
+
+export const SettingsView = __t.object("SettingsView", {});
+export type SettingsView = __Infer<typeof SettingsView>;
 

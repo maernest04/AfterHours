@@ -14,3 +14,6 @@ __pycache__/
 
 # SpacetimeDB local tokens
 backend/.secrets/
+
+# Local file store (persistent server volume for the demo)
+data/

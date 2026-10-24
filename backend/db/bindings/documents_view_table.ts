@@ -12,11 +12,15 @@ import {
 
 export default __t.row({
   id: __t.u64().primaryKey(),
-  fileId: __t.u64().name("file_id"),
-  docType: __t.string().name("doc_type"),
-  referenceId: __t.option(__t.string()).name("reference_id"),
+  companyId: __t.string().name("company_id"),
+  storageKey: __t.string().name("storage_key"),
+  type: __t.string(),
   version: __t.u32(),
   contentHash: __t.string().name("content_hash"),
+  byteLength: __t.u32().name("byte_length"),
+  mediaType: __t.string().name("media_type"),
+  originalFilename: __t.string().name("original_filename"),
+  referenceId: __t.option(__t.string()).name("reference_id"),
   sourceLabel: __t.string().name("source_label"),
   supersedesDocumentId: __t.option(__t.u64()).name("supersedes_document_id"),
   uploadKey: __t.string().name("upload_key"),

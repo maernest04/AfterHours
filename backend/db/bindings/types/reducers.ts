@@ -6,13 +6,13 @@
 import { type Infer as __Infer } from "spacetimedb";
 
 // Import all reducer arg schemas
+import ConfigureSettingsReducer from "../configure_settings_reducer";
+import RegisterServiceIdentityReducer from "../register_service_identity_reducer";
 import StoreDocumentReducer from "../store_document_reducer";
-import StoreDocumentTextReducer from "../store_document_text_reducer";
 import StoreDocumentVersionReducer from "../store_document_version_reducer";
-import VerifyStoredFileReducer from "../verify_stored_file_reducer";
 
+export type ConfigureSettingsParams = __Infer<typeof ConfigureSettingsReducer>;
+export type RegisterServiceIdentityParams = __Infer<typeof RegisterServiceIdentityReducer>;
 export type StoreDocumentParams = __Infer<typeof StoreDocumentReducer>;
-export type StoreDocumentTextParams = __Infer<typeof StoreDocumentTextReducer>;
 export type StoreDocumentVersionParams = __Infer<typeof StoreDocumentVersionReducer>;
-export type VerifyStoredFileParams = __Infer<typeof VerifyStoredFileReducer>;
 

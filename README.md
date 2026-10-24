@@ -59,7 +59,7 @@ In short:
 ```powershell
 npm install; npm run db:install
 spacetime start                      # separate terminal, leave running
-npm run db:publish; npm run db:generate; npm run db:seed; npm run smoke   # expect 13/13
+npm run db:publish; npm run db:generate; npm run db:bootstrap; npm run db:seed; npm run smoke   # expect 14/14
 ```
 
 Progress notes: [docs/SPACETIME_DB_PROGRESS.md](docs/SPACETIME_DB_PROGRESS.md).

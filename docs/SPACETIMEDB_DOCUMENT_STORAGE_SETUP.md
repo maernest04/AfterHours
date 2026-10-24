@@ -1,6 +1,7 @@
 # SpacetimeDB document storage: setup and handoff
 
 **Audience:** teammates and coding agents setting this up on another machine.
+**Source of truth:** `Accrual_Correction_Brief` (revised: SpacetimeDB edition). This layer implements the brief's process boundaries for documents. Its pages are cited below as "brief p.N".
 **Phase goal:** SpacetimeDB runs locally and can store, retrieve, version and list synthetic source documents and their metadata.
 
 > **Not in this phase:** AI agents (Factory, Bitdeer), worker loops, job leasing, extraction, matching, investigation, accounting calculations, proposals, approvals, reviews, exports and CSV generation, the mock mailbox, and case workflows. This phase is **document storage only**. All data is synthetic, and no API keys are needed.
@@ -8,8 +9,6 @@
 ---
 
 ## 0. Quick start (copy-paste)
-
-Run these from the repo root. Section numbers point to the details.
 
 ```powershell
 # one-time per machine (§1)
@@ -25,50 +24,69 @@ npm run db:install
 # terminal A: leave running (§3)
 spacetime start
 
-# terminal B (§4-§6)
-npm run db:publish        # first run creates database "accrual-docs"
+# terminal B (§5-§7)
+npm run db:publish        # first run creates database "accrual-docs"; the CLI identity becomes owner
 npm run db:generate       # regenerate TypeScript bindings
 npm run typecheck
-npm run db:seed           # synthetic documents (safe to re-run)
-npm run smoke             # expect: 13/13 checks passed
+npm run db:bootstrap      # owner: configure company + register gateway/worker identities (safe to re-run)
+npm run db:seed           # synthetic documents via the gateway identity (safe to re-run)
+npm run smoke             # expect: 14/14 checks passed
 ```
 
-**Done when:** `npm run smoke` ends with `13/13 checks passed`, and `npm run db:sql` lists document rows for `DEMO-ACME-2026-09`.
+**Done when:** `npm run smoke` ends with `14/14 checks passed`, and `npm run db:sql` lists document rows for `DEMO-ACME-2026-09`.
 
 ---
 
-## 1. Prerequisites (one-time per machine)
+## 1. Architecture (brief p.2-3, documents only)
+
+```text
+Browser ──► Next.js server gateway (control plane) ──► SpacetimeDB (private tables, reducers check caller)
+                 │  server-held GATEWAY identity              ▲ public views filter by ctx.sender
+                 └─► file store (persistent volume)           │
+Node worker (separate WORKER identity) ──── reads views ──────┘ + reads file store
+```
+
+| Brief requirement | Implementation |
+|---|---|
+| "Browser requests go through a Next.js server gateway; it uses a server-held SpacetimeDB identity" | The `GATEWAY` service identity. Its token is in `backend/.secrets/gateway.token` and never reaches the browser. |
+| "Tables stay private; public views check `ctx.sender` against configured gateway/worker identities" | All 4 tables are private. `documents_view`, `settings_view` and `my_service_identity` return rows only to registered identities. |
+| "A Node worker connects with a separate approved service identity" | The `WORKER` identity (`backend/.secrets/worker.token`). It can read the views but **can't write** documents. |
+| "Reducers check the caller and atomically validate state changes" | `store_document*` accept only `GATEWAY`. `configure_settings` and `register_service_identity` accept only the owner. |
+| "Original files … live on a persistent server volume … referenced by storageKey and hash" | Content-addressed file store at `FILE_STORE_DIR` (default `data/files/`). `storageKey = "sha256/<contentHash>"`, and every read is re-hashed. |
+| "Every business record belongs to the fixed demo company; the backend rejects other company IDs" | `settings.companyId` (default `demo`). Every reducer and the adapter reject any other company. |
+| "Index companyId, caseId and job status for view lookups" | `documents.companyId` is indexed. `caseId` and job status come with later phases. |
+| "Preserve source versions" | New versions are new rows linked by `supersedes_document_id`. Rows are never updated or deleted. |
+
+## 2. Prerequisites (one-time per machine)
 
 | Tool | Required version | Check |
 |---|---|---|
 | Git | any | `git --version` |
-| Node.js | **22.x** (22.18+ recommended, see §9) | `node --version` |
+| Node.js | **22.x** (22.18+ recommended, see §10) | `node --version` |
 | SpacetimeDB CLI | **2.13.x**, matching the `spacetimedb` npm package | `spacetime --version` |
 
-Install the SpacetimeDB CLI:
-
-| OS | Command |
+| OS | Install the SpacetimeDB CLI |
 |---|---|
 | Windows (PowerShell) | `iwr https://windows.spacetimedb.com -useb \| iex` |
 | macOS / Linux | `curl -sSf https://install.spacetimedb.com \| sh` |
 
-- **Windows:** the installer adds `%LOCALAPPDATA%\SpacetimeDB` to your user PATH, so **open a new terminal** afterwards. To refresh PATH in the current PowerShell session instead, run:
+- **Windows:** **open a new terminal** after installing. To refresh PATH in the current session instead, run:
   ```powershell
   $env:Path = [Environment]::GetEnvironmentVariable('Path','User') + ';' + $env:Path
   ```
-- **Pin the version.** The CLI and the npm SDK must share a minor version (`2.13`). If `spacetime --version` reports something else, run:
+- **Pin the version** if `spacetime --version` isn't 2.13.x:
   ```powershell
   spacetime version install 2.13.0
   spacetime version use 2.13.0
   ```
 
-## 2. Install dependencies (one-time per clone)
+Install dependencies once per clone:
 
 ```powershell
 git clone <repo-url> AfterHours
 cd AfterHours
-npm install          # root: spacetimedb SDK, tsx, typescript (Node client, seed, smoke)
-npm run db:install   # backend/db/spacetime/spacetimedb: module dependencies used by `spacetime publish`
+npm install          # root: spacetimedb SDK, tsx, typescript
+npm run db:install   # module dependencies used by `spacetime publish`
 ```
 
 ## 3. Start the local server
@@ -79,208 +97,198 @@ Run this in its own terminal and leave it running:
 spacetime start
 ```
 
-- The server listens on `http://localhost:3000`. To check it, run `spacetime server ping local`.
-- Data persists between restarts in the CLI's data directory. Each machine has its **own** local server and data; nothing is shared between machines.
+The server listens on `http://localhost:3000`; check it with `spacetime server ping local`. Each machine has its own server, data, identities and file store.
 
 ## 4. Environment variables
 
-Every variable is optional; the defaults work for local development. To override them, copy the template:
+All variables are optional. To override them, run `Copy-Item .env.example .env`; npm scripts load `.env` automatically. Everything here is **server-side only**.
 
-```powershell
-Copy-Item .env.example .env      # macOS/Linux: cp .env.example .env
-```
-
-Every npm script loads `.env` automatically when it exists (`--env-file-if-exists`), and `.env` is git-ignored.
-
-| Variable | Default | Used by |
+| Variable | Default | Purpose |
 |---|---|---|
-| `SPACETIMEDB_URI` | `http://localhost:3000` | publish, generate, sql, seed, smoke, client library |
-| `SPACETIMEDB_DATABASE` | `accrual-docs` | same as above |
-| `COMPANY_ID` | `demo` | the DataPlane adapter's fixed demo company (§11) |
-| `SPACETIME_BIN` | auto-detected | path to the `spacetime` executable if it's not on PATH |
-| `NEXT_PUBLIC_SPACETIMEDB_URI` / `NEXT_PUBLIC_SPACETIMEDB_DATABASE` | — | reserved for the future Next.js UI; keep them equal to the values above |
+| `SPACETIMEDB_URI` | `http://localhost:3000` | SpacetimeDB server |
+| `SPACETIMEDB_DATABASE` | `accrual-docs` | Database name. Lowercase letters, digits and dashes; **no underscores** |
+| `COMPANY_ID` | `demo` | Fixed demo company set by `db:bootstrap`. Must match the control plane's `context.companyId` |
+| `FILE_STORE_DIR` | `<repo>/data/files` | Persistent volume for original files (git-ignored) |
+| `SPACETIMEDB_SECRETS_DIR` | `<repo>/backend/.secrets` | Gateway and worker identity tokens (git-ignored) |
+| `SPACETIME_BIN` | auto-detected | Path to the `spacetime` executable if it isn't on PATH |
 
-Database names must match `^[a-z0-9]+(-[a-z0-9]+)*$`: lowercase letters, digits and dashes, with **no underscores**.
-
-## 5. Publish the module and generate bindings
+## 5. Publish, generate and bootstrap
 
 ```powershell
-npm run db:publish    # create or update the database, keeping its data
-npm run db:generate   # writes backend/db/bindings/ (committed; regenerate after every schema change)
-npm run typecheck     # root Node code + module
+npm run db:publish     # create or update the database, keeping its data
+npm run db:generate    # writes backend/db/bindings/ (committed; regenerate after module changes)
+npm run typecheck
+npm run db:bootstrap   # as owner: configure_settings + register GATEWAY and WORKER identities
 ```
 
-- **First publish on a machine:** the CLI logs itself in to the **local server only** with a server-issued identity, and that identity becomes the database **owner**. It doesn't affect any Maincloud login.
-- `npm run db:reset` republishes with `--delete-data=always`, which **wipes all rows**. Use it after breaking schema changes.
-- The scripts call `scripts/db.mjs`, which passes `--no-config`, so `backend/db/spacetime/spacetime*.json` are ignored by npm scripts. Those files only matter if you run `spacetime` manually from that folder.
+- **Owner:** the first publish logs the CLI in to the **local server only**. That identity becomes the module owner, recorded by `init`. `db:bootstrap` reads the owner token with `spacetime login show --token`.
+- **Service identities:** on first run, `db:bootstrap` creates the gateway and worker identities and saves their tokens in `backend/.secrets/`. Re-running it is a no-op.
+- **`npm run db:reset`** republishes with `--delete-data=always`, which wipes all rows and the owner/identity registrations. **Re-run `db:bootstrap` afterwards.** The file store isn't wiped. Content-addressed files are harmless to keep; delete `data/files/` if you want it clean.
 
 ## 6. Seed and smoke test
 
 ```powershell
 npm run db:seed    # 6 synthetic Acme documents + v2 of the timesheet under reference DEMO-ACME-2026-09
-npm run smoke      # 13 checks; prints PASS/FAIL per check; exit code 1 on any failure
-npm run db:sql                                                         # id, doc_type, version, reference_id
-npm run db:sql -- "SELECT id, original_filename, byte_size, sha256 FROM files"
+npm run smoke      # 14 checks; exit code 1 on any failure
+npm run db:sql                                                       # id, type, version, reference_id (owner query)
+npm run db:sql -- "SELECT id, type, storage_key, byte_length FROM documents"
 ```
 
-Expected seed output, with IDs 1-7 on a fresh database (`npm run db:reset` first):
+Expected seed output on a fresh database:
 
 ```text
-[seed] CONTRACT      doc 1 v1  acme_msa.txt
-[seed] AMENDMENT     doc 2 v1  acme_amendment_1.txt
-[seed] TIMESHEET     doc 3 v1  acme_timesheet_2026-09_v1.csv
-[seed] INVOICE       doc 4 v1  acme_invoices_2026-08.csv
-[seed] LEDGER        doc 5 v1  ledger_2026-09.csv
-[seed] ACCRUAL       doc 6 v1  acme_accrual_2026-09.json
-[seed] TIMESHEET     doc 7 v2  supersedes doc 3
+[seed] CONTRACT  doc 1 v1  acme_msa.txt
+[seed] AMENDMENT doc 2 v1  acme_amendment_1.txt
+[seed] TIMESHEET doc 3 v1  acme_timesheet_2026-09_v1.csv
+[seed] INVOICE   doc 4 v1  acme_invoices_2026-08.csv
+[seed] LEDGER    doc 5 v1  ledger_2026-09.csv
+[seed] ACCRUAL   doc 6 v1  acme_accrual_2026-09.json
+[seed] TIMESHEET doc 7 v2  supersedes doc 3
 ```
 
-- The seed is idempotent because it uses fixed upload keys. Each smoke run uses a new `SMOKE-xxxxxxxx` reference ID, so you can re-run it any time without resetting.
-- The smoke test checks that:
-  - upload stores the file and its metadata
-  - the bytes read back are identical
-  - size and hash verify on both the client and the server
-  - an upload with a wrong hash is rejected
-  - an invalid document type or MIME type is rejected
+The smoke test uses a fresh `SMOKE-xxxxxxxx` reference each run, so it can run repeatedly. It proves:
+- **Storage and integrity:**
+  - gateway upload puts the bytes on the file store and the metadata in SpacetimeDB
+  - bytes read back are identical and verified against their hash
+  - a tampered file is detected on read
+- **Reducer validation:** a mismatched storage key, an invalid type or media type, and another company are all rejected.
+- **Access rules:**
+  - only the gateway can write; the worker and unregistered clients are rejected, and only the owner can configure
+  - the gateway and worker can see documents through the views; an unregistered client sees nothing
+- **Versioning:**
   - an idempotent retry creates no duplicate
   - v2 is stored without changing v1
   - versioning a superseded document or uploading identical content is rejected
   - list filters work
-  - extracted text round-trips
-  - `api.imports.upload` and `api.evidence.readDocument` from `backend/control_plane` work end to end through the adapter (§11)
-  - a 10 MiB upload, the control plane's limit, is accepted
+- **Control plane:**
+  - `imports.upload`, `evidence.readDocument` and `settings.get` work through Matthew's real API handlers
+  - a 10 MiB upload is accepted
   - the adapter rejects other companies, documents from another case, and operations that aren't built yet
 
 ## 7. Schema (the document-storage contract)
 
-`files` and `documents` rows are **never updated or deleted**. A change is always a new version row. All three tables are public, so any client can subscribe to them.
+All tables are **private**. Clients read through views (§8). Only the owner can query tables directly, with `npm run db:sql`.
 
-### `files`
+### `documents` (brief p.3: `companyId, storageKey, type, version, contentHash`)
 | Column | Type | Notes |
 |---|---|---|
 | `id` | u64, primary key, auto-increment | |
-| `original_filename` | string | |
-| `mime_type` | string | `text/plain`, `text/csv`, `application/json` or `application/pdf` |
-| `bytes` | byte array | Raw content, up to **10 MiB** (matches the control plane's `maxUploadBytes`) |
-| `byte_size` | u32 | |
-| `sha256` | string, btree index | Lowercase hex, computed **by the server** |
-| `created_at` | timestamp | Server time |
-
-### `documents`
-| Column | Type | Notes |
-|---|---|---|
-| `id` | u64, primary key, auto-increment | |
-| `file_id` | u64, btree index | Refers to `files.id` |
-| `doc_type` | string, btree index | `ACCRUAL`, `CONTRACT`, `AMENDMENT`, `TIMESHEET`, `INVOICE`, `LEDGER` or `OTHER`, the same list as `DocumentType` in `backend/control_plane/contracts.ts` |
-| `reference_id` | option\<string\> | A free-form case or reference ID for future linking |
+| `company_id` | string, btree index | Always `settings.company_id` |
+| `storage_key` | string | `sha256/<content_hash>`, a file-store reference |
+| `type` | string, btree index | `ACCRUAL`, `CONTRACT`, `AMENDMENT`, `TIMESHEET`, `INVOICE`, `LEDGER` or `OTHER` (same list as the control plane's `DocumentType`) |
 | `version` | u32 | 1, 2, 3 and so on |
-| `content_hash` | string, btree index | Equal to `files.sha256` |
-| `source_label` | string | Where the document came from, e.g. `seed (SYNTHETIC)` or `ui upload` |
+| `content_hash` | string, btree index | Lowercase SHA-256 hex |
+| `byte_length` | u32 | Up to 10 MiB (the control plane's `maxUploadBytes`) |
+| `media_type` | string | `text/csv`, `application/json`, `text/plain` or `application/pdf` |
+| `original_filename` | string | |
+| `reference_id` | option\<string\> | Optional case or reference link |
+| `source_label` | string | e.g. `gateway:<serviceIdentity>` or `seed (SYNTHETIC)` |
 | `supersedes_document_id` | option\<u64\> | The previous version. Empty for v1 |
-| `upload_key` | string, unique | Idempotency key chosen by the caller |
+| `upload_key` | string, unique | Idempotency key, so a retry never duplicates |
 | `created_at` | timestamp | |
 
-### `document_text` (optional)
-| Column | Type | Notes |
+### `settings` (brief p.3: "fixed demo companyId; currency, expenseAccount, liabilityAccount, policyVersion. No memberships table")
+`id` (always 0), `company_id`, `currency` (`USD`), `expense_account {code, name}`, `liability_account {code, name}`, `policy_version`.
+
+### `service_identity`
+`identity` (primary key), `role` (`GATEWAY` or `WORKER`), `label`, `created_at`. These are the brief's "configured gateway/worker identities".
+
+### `module_owner`
+`id` (always 0), `identity`. Recorded by `init` from the publishing identity.
+
+## 8. Reducers, views and the Node API
+
+Reducers are transactional and **return no data**. A call resolves on success and rejects with an error message on failure. Read results through the views.
+
+| Reducer (TS accessor) | Caller | Behavior |
 |---|---|---|
-| `document_id` | u64, primary key | Refers to `documents.id` |
-| `text` | string | Extracted text |
-| `extraction_status` | string | `PENDING`, `EXTRACTED` or `FAILED` |
-| `created_at` | timestamp | |
+| `configure_settings` (`configureSettings`) | owner | Creates or updates the company settings. USD only, and the company can't change once set. |
+| `register_service_identity` (`registerServiceIdentity`) | owner | Registers an identity as `GATEWAY` or `WORKER`. Idempotent. |
+| `store_document` (`storeDocument`) | gateway | Records v1 of a document whose bytes are already on the file store. Validates the company, type, media type, size, hash format and storage key. Same `uploadKey` with the same content: no-op. With different content: error. |
+| `store_document_version` (`storeDocumentVersion`) | gateway | Records v N+1, which inherits `type` and `referenceId` and sets `supersedesDocumentId`. Rejects the call if the previous document isn't the latest version or the content is identical. |
 
-Unlike the other two tables, a `document_text` row **may be replaced**, for example when text is re-extracted.
+| View | Returns |
+|---|---|
+| `documents_view` | All documents for the company, to registered gateway and worker identities only |
+| `settings_view` | The settings row, to registered identities only |
+| `my_service_identity` | The caller's own role (empty if unregistered), so services can check themselves at startup |
 
-## 8. Reducer and repository reference
-
-Reducers are transactional and **return no data**. A call resolves on success and rejects with an error message on failure. Read results from the subscribed tables. There are no procedures in this phase.
-
-| Reducer (TS accessor) | Arguments | Behavior |
-|---|---|---|
-| `store_document` (`storeDocument`) | `uploadKey`, `originalFilename`, `mimeType`, `bytes`, `expectedSha256` (`''` skips the check), `docType`, `referenceId?`, `sourceLabel` | Validates the type, MIME type and size, computes the SHA-256, and rejects the call if `expectedSha256` doesn't match. Inserts a `files` row and a `documents` row at v1. If the `uploadKey` was already used with the same content, it does nothing; with different content, it errors. |
-| `store_document_version` (`storeDocumentVersion`) | `uploadKey`, `previousDocumentId`, `originalFilename`, `mimeType`, `bytes`, `expectedSha256`, `sourceLabel` | Adds version N+1, which inherits `docType` and `referenceId` and sets `supersedesDocumentId`. The old row is unchanged. Rejects the call if the previous document isn't the latest version or the content is identical. |
-| `verify_stored_file` (`verifyStoredFile`) | `fileId` | Recomputes the size and SHA-256 on the server and rejects the call on any mismatch. |
-| `store_document_text` (`storeDocumentText`) | `documentId`, `text`, `extractionStatus` | Inserts or replaces the extracted text for a document. |
-
-**Node code should use the repository helpers** in `backend/db/repositories/` instead of calling reducers directly. The helpers compute `expectedSha256`, generate upload keys and wait for the replicated row:
+**The Node API (`backend/db/repositories/`)** is what the gateway and worker should use:
 
 ```ts
-import { connect } from './backend/db/repositories/client';
+import { connectService } from './backend/db/repositories/client';
 import * as docs from './backend/db/repositories/documents';
+import { createSpacetimeDataPlane } from './backend/db/repositories/data_plane';
 
-const { conn } = await connect();                          // subscribes to all tables
-const doc = await docs.uploadDocument(conn, { bytes, originalFilename, mimeType, docType: 'INVOICE', referenceId, sourceLabel });
-const v2  = await docs.addDocumentVersion(conn, doc.id, { bytes: newBytes, originalFilename, mimeType, sourceLabel });
-docs.getDocument(conn, id);  docs.getFile(conn, fileId);  docs.readDocument(conn, id);   // includes bytes
-docs.listDocuments(conn, { docType: 'TIMESHEET', referenceId, latestOnly: true });
-docs.getVersionHistory(conn, anyVersionId);                 // v1 first
-docs.verifyFileLocally(conn, fileId);  await docs.verifyFileOnServer(conn, fileId);
-await docs.saveDocumentText(conn, id, text, 'EXTRACTED');  docs.getDocumentText(conn, id);
-conn.disconnect();
+const { conn } = await connectService('gateway');         // or 'worker' (read-only); fails fast if not bootstrapped
+const doc = await docs.uploadDocument(conn, { companyId, bytes, originalFilename, mediaType, type: 'INVOICE', referenceId, sourceLabel });
+const v2  = await docs.addDocumentVersion(conn, doc.id, { companyId, bytes: newBytes, originalFilename, mediaType, sourceLabel });
+docs.getDocument(conn, id);  docs.readDocument(conn, id);   // readDocument returns hash-verified bytes from the file store
+docs.listDocuments(conn, { type: 'TIMESHEET', referenceId, latestOnly: true });
+docs.getVersionHistory(conn, anyVersionId);  docs.findByContentHash(conn, hash);  docs.verifyDocument(conn, id);
+
+const dataPlane = createSpacetimeDataPlane(conn);          // for backend/control_plane handlers
 ```
 
-- IDs are `bigint` (`u64`), and optional columns are `undefined` when unset.
-- Uploads go through a websocket message. A 10 MiB upload takes about 1 second locally.
-
-## 9. Troubleshooting
-
-| Symptom | Cause and fix |
+| Control-plane operation | Status |
 |---|---|
-| `spacetime` is not recognized | PATH wasn't refreshed. Open a new terminal or refresh it (§1). Or set `SPACETIME_BIN` to the full path. |
-| `Server is not responding` / `ECONNREFUSED 127.0.0.1:3000` | `spacetime start` isn't running, or another process holds port 3000. |
-| Publish fails with a permission or owner error | The database was created by a different identity (for example after `spacetime logout`). Use another name (`$env:SPACETIMEDB_DATABASE="accrual-docs-2"`), or run `spacetime delete accrual-docs --server local` and publish again. |
-| Publish fails with a breaking-change or schema-conflict error | Run `npm run db:reset`. This wipes the data; re-run the seed afterwards. |
-| TypeScript errors about missing reducers or tables | The bindings are stale. Run `npm run db:generate` after every module change. |
-| Invalid database name | Underscores and uppercase letters aren't allowed (§4). |
-| Seed or smoke hangs on "Connecting to SpacetimeDB WS…" | Wrong `SPACETIMEDB_URI`/`SPACETIMEDB_DATABASE`, or the module isn't published. Run `npm run db:publish`. |
-| `backend/control_plane` tests fail with a TypeScript syntax error | They need Node **22.18+** (native TypeScript). On older 22.x versions, run `node --experimental-strip-types --test control_plane.test.mjs`. |
-| `npm` is blocked by the PowerShell execution policy | `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`, or run `npm.cmd`. |
-| Inspect server-side errors | `spacetime logs accrual-docs --server local -n 50`. A few `ERROR` lines after a smoke run are expected: those are the deliberate rejection checks (bad MIME type, superseded version, identical content and so on). |
+| `imports.upload` | Done |
+| `evidence.readDocument` | Done. A document whose `reference_id` is set must match `caseId` |
+| `settings.get` | Done |
+| All other operations | Return `DATA_PLANE_UNAVAILABLE` (503) until later phases |
 
-## 10. Repository layout (database parts)
+## 9. Repository layout (database parts)
 
 ```text
 .env.example                                         environment template (§4)
 package.json                                         npm scripts (db:*, smoke, typecheck)
 scripts/db.mjs                                       publish / reset / generate / sql wrapper (env-driven)
-backend/db/spacetime/spacetimedb/src/schema.ts       tables (§7)
-backend/db/spacetime/spacetimedb/src/index.ts        reducers (§8)
-backend/db/spacetime/spacetimedb/src/rules/hash.ts   pure-TS SHA-256 (module runtime has no node:crypto)
+backend/db/spacetime/spacetimedb/src/schema.ts       private tables (§7)
+backend/db/spacetime/spacetimedb/src/index.ts        reducers + views (§8)
 backend/db/spacetime/CLAUDE.md                       SpacetimeDB TypeScript API reference for coding agents
-backend/db/bindings/                                 generated client bindings — never edit by hand
-backend/db/repositories/client.ts                    connect() + waitFor()
+backend/db/bindings/                                 generated client bindings (views + reducers) — never edit by hand
+backend/db/repositories/client.ts                    connect / connectService / ownerToken / waitFor
+backend/db/repositories/file_store.ts                content-addressed file store (putFile / getFile)
 backend/db/repositories/documents.ts                 document API (§8)
-backend/db/repositories/data_plane.ts                DataPlane adapter for the control plane (§11)
+backend/db/repositories/data_plane.ts                DataPlane adapter for backend/control_plane
+backend/db/seed/bootstrap.ts                         owner setup: settings + service identities
 backend/db/seed/seed.ts, seed/documents/*            synthetic seed data
 backend/db/test/smoke.ts                             smoke test
-backend/control_plane/                               request validation + DataPlane interface (separate package, see §11)
+backend/control_plane/                               request validation + DataPlane port (Matthew; unchanged by this layer)
+data/files/                                          local file store (git-ignored)
+backend/.secrets/                                    gateway/worker tokens (git-ignored)
 ```
 
-## 11. Adding agent features later without breaking this contract
+## 10. Troubleshooting
 
-- **Treat the three tables and four reducers above as a stable API.** Add new tables (cases, jobs, facts, proposals and so on) and new reducers alongside them. Don't rename, retype or remove these columns.
-- **Link by ID, don't copy.** New tables should store `documents.id`, plus a page or row reference where useful, instead of duplicating bytes or metadata. `reference_id` is a plain string precisely so a future `cases` table can adopt it without a migration.
-- **Agents read documents** through `listDocuments`, `readDocument` and `getDocumentText`. They write extracted text through `saveDocumentText`, using `PENDING`, `EXTRACTED` or `FAILED`.
-- **Never mutate or delete document versions.** A corrected source is a new version created with `addDocumentVersion`. Anything derived from a document should record which `documents.id` (version) it used, so downstream logic can tell when its inputs changed.
-- **Connecting the control plane.** `backend/control_plane/` (Matthew's commit) defines the `DataPlane.execute(operation, context, input)` port. This database layer implements it in `backend/db/repositories/data_plane.ts` (`createSpacetimeDataPlane(conn)`) **without modifying any control-plane file**. The database follows the control plane's contracts: same document types, same 10 MiB limit, and string IDs at the boundary (`"7"`, converted to `7n` inside the adapter).
+| Symptom | Cause and fix |
+|---|---|
+| `spacetime` is not recognized | PATH wasn't refreshed. Open a new terminal (§2), or set `SPACETIME_BIN`. |
+| `ECONNREFUSED 127.0.0.1:3000`, or the seed hangs on "Connecting…" | `spacetime start` isn't running, or `SPACETIMEDB_URI`/`SPACETIMEDB_DATABASE` is wrong. |
+| `… is not registered as GATEWAY; run npm run db:bootstrap` | Bootstrap hasn't run since the last publish or reset. Run `npm run db:bootstrap`. |
+| `Only the module owner may do this` during bootstrap | The CLI identity isn't the one that published, for example after `spacetime logout`. Use a new database name, or run `spacetime delete accrual-docs --server local` and publish again. |
+| `Settings are not configured` | Run `npm run db:bootstrap`. |
+| `File … is missing from the file store` | The metadata exists but `FILE_STORE_DIR` points somewhere else, or the files were deleted. The gateway and worker must share the same volume. |
+| Publish fails with a breaking-change error | `npm run db:reset`, then `db:bootstrap` and `db:seed`. |
+| TypeScript errors about missing reducers or views | Stale bindings. Run `npm run db:generate`. |
+| `backend/control_plane` tests fail on Node < 22.18 | Run `node --experimental-strip-types --test control_plane.test.mjs` from that folder. |
+| `npm` is blocked by the PowerShell execution policy | `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`, or run `npm.cmd`. |
+| Inspect server-side errors | `spacetime logs accrual-docs --server local -n 50`. `ERROR` lines after a smoke run are expected: they come from its deliberate rejection checks. |
 
-  | DataPlane operation | Status | Implemented with |
-  |---|---|---|
-  | `imports.upload` | Done | `uploadDocument`; returns `{ uploadId, contentHash }` |
-  | `evidence.readDocument` | Done | `readDocument`; a document whose `reference_id` is set must match `caseId` |
-  | all other operations | `DATA_PLANE_UNAVAILABLE` (503) | need new tables and reducers in a later phase |
+## 11. Adding later phases without breaking this contract
 
-  The adapter also rejects any `context.companyId` other than `COMPANY_ID` (env, default `demo`). To add an operation, put a handler in the `handlers` map in `data_plane.ts` and add a smoke check. The control-plane files stay as they are.
-- **Schema migrations:**
-  - Adding a table, or appending a column with `.default(...)`, is safe with `npm run db:publish`.
-  - Renaming or removing columns is breaking and requires `npm run db:reset`, which wipes the data.
-  - After any change, run `npm run db:generate`, then `npm run typecheck`, then `npm run smoke`, and commit the regenerated `backend/db/bindings/`.
-- **Authorization is open in this phase.** Any client can call these reducers. When agents arrive, add identity checks with `ctx.sender` in new reducers. Don't trust identities passed as arguments.
-- **Large files:** bytes live in the row, which suits files up to the 10 MiB limit. If you need bigger files, add an external blob store and keep `files.sha256` as the integrity anchor.
+- **Follow the brief's backend contract (p.4) for new reducers.** Examples: `finalize_import`, `start_review`, `claim_job`, `heartbeat_job`, `complete_job`, `ask_question`, `resolve_exception`, `build_proposal`, `decide_review`, `authorize_export` and `finalize_export`. Each one starts with a caller check (`GATEWAY` or `WORKER`) and a company check, like `store_document` does.
+- **Keep new tables private** and expose them through views filtered by `ctx.sender`, like `documents_view`. Index `companyId`, `caseId` and job status, as the brief requires.
+- **Don't change the §7 `documents` columns or the §8 reducer signatures.** Extend them instead. Facts, cases and so on should reference `documents.id`. The brief's "documents / facts" record puts `documentId, pageOrRow, excerpt, field, value, validationStatus` in a new `facts` table.
+- **Files:** export CSVs go to the same file store with `putFile` (brief p.2/p.4: "storageKey and hash"). Never store bytes in SpacetimeDB.
+- **The worker** connects with `connectService('worker')`. It reads `documents_view` plus the file store and is never allowed to call the document-writing or approval reducers.
+- **The control plane:** add a handler per operation in `data_plane.ts`, plus a smoke check. Don't edit `backend/control_plane/`; that's Matthew's code.
+- **After a module change,** run `db:publish` (or `db:reset` followed by `db:bootstrap`), then `db:generate`, `typecheck` and `smoke`, and commit the regenerated bindings.
 
 ## 12. Checklist for a coding agent picking this up
 
-1. Read §0 and run the quick start. Stop and report if `npm run smoke` is not 13/13.
-2. Read `backend/db/spacetime/CLAUDE.md` before changing the module. Two rules to keep in mind: reducers are deterministic and return nothing, and `ctx.sender` is the only trusted identity.
-3. Don't modify the §7 columns or the §8 reducer signatures. Extend them instead.
-4. After changing the module, run `db:publish` (or `db:reset`), then `db:generate`, `typecheck` and `smoke`.
+1. Run §0. Stop and report if `npm run smoke` isn't 14/14.
+2. Read the brief and `backend/db/spacetime/CLAUDE.md` before changing the module. Reducers are deterministic, return nothing, and must check `ctx.sender`.
+3. Keep tables private, read through views, and keep file bytes on the file store.
+4. Don't modify `backend/control_plane/`, the §7 columns, or the §8 reducer signatures.
 5. Keep all demo data synthetic and labeled `(SYNTHETIC)`.

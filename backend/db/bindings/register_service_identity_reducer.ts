@@ -11,5 +11,7 @@ import {
 } from "spacetimedb";
 
 export default {
-  fileId: __t.u64(),
+  identity: __t.identity(),
+  role: __t.string(),
+  label: __t.string(),
 };

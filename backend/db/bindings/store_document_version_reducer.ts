@@ -11,11 +11,13 @@ import {
 } from "spacetimedb";
 
 export default {
+  companyId: __t.string(),
   uploadKey: __t.string(),
   previousDocumentId: __t.u64(),
+  storageKey: __t.string(),
+  contentHash: __t.string(),
+  byteLength: __t.u32(),
+  mediaType: __t.string(),
   originalFilename: __t.string(),
-  mimeType: __t.string(),
-  bytes: __t.byteArray(),
-  expectedSha256: __t.string(),
   sourceLabel: __t.string(),
 };

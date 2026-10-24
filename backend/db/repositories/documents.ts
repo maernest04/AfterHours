@@ -1,91 +1,97 @@
-// Document-storage repository: the API other components (agents, UI) should use.
-// Writes go through reducers; reads come from the subscribed local replica.
+// Document-storage repository: the API the gateway (control plane) and worker use.
+// Writes: bytes to the file store, then metadata through gateway-only reducers.
+// Reads: the `documents_view` replica (visible only to configured service identities) + file store.
 
-import { createHash, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import type { DbConnection } from '../bindings/index';
 import { waitFor } from './client';
+import { getFile, putFile } from './file_store';
 
-export const DOC_TYPES = ['ACCRUAL', 'CONTRACT', 'AMENDMENT', 'TIMESHEET', 'INVOICE', 'LEDGER', 'OTHER'] as const;
-export type DocType = (typeof DOC_TYPES)[number];
+// Matches DocumentType and parameterLimits in backend/control_plane.
+export const DOCUMENT_TYPES = ['ACCRUAL', 'CONTRACT', 'AMENDMENT', 'TIMESHEET', 'INVOICE', 'LEDGER', 'OTHER'] as const;
+export type DocumentType = (typeof DOCUMENT_TYPES)[number];
+export const MEDIA_TYPES = ['text/csv', 'application/json', 'text/plain', 'application/pdf'] as const;
+export const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
 
-type Rows<T extends { iter(): Iterable<unknown> }> = T extends { iter(): Iterable<infer R> } ? R : never;
-export type FileRow = Rows<DbConnection['db']['files']>;
-export type DocumentRow = Rows<DbConnection['db']['documents']>;
-export type DocumentTextRow = Rows<DbConnection['db']['documentText']>;
-
-export function sha256(bytes: Uint8Array): string {
-  return createHash('sha256').update(bytes).digest('hex');
-}
+type Rows<T> = T extends { iter(): Iterable<infer R> } ? R : never;
+export type DocumentRow = Rows<DbConnection['db']['documentsView']>;
 
 export type UploadInput = {
+  companyId: string;
   bytes: Uint8Array;
   originalFilename: string;
-  mimeType: string;
-  docType: DocType;
+  mediaType: string;
+  type: DocumentType;
   referenceId?: string;
   sourceLabel: string;
   /** Idempotency key; reuse it when retrying the same upload. Defaults to a random UUID. */
   uploadKey?: string;
 };
 
-/** Upload a file and create version 1 of a document. Resolves with the stored document row. */
+function checkBytes(bytes: Uint8Array, mediaType: string) {
+  if (bytes.length === 0 || bytes.length > MAX_UPLOAD_BYTES) throw new Error(`Upload must be 1 to ${MAX_UPLOAD_BYTES} bytes`);
+  if (!(MEDIA_TYPES as readonly string[]).includes(mediaType)) throw new Error(`Unsupported media type ${mediaType}`);
+}
+
+/** Gateway: save bytes to the file store, then record version 1. Resolves with the document row. */
 export async function uploadDocument(conn: DbConnection, input: UploadInput): Promise<DocumentRow> {
+  checkBytes(input.bytes, input.mediaType);
   const uploadKey = input.uploadKey ?? randomUUID();
+  const stored = putFile(input.bytes);
   await conn.reducers.storeDocument({
+    companyId: input.companyId,
     uploadKey,
+    ...stored,
+    mediaType: input.mediaType,
     originalFilename: input.originalFilename,
-    mimeType: input.mimeType,
-    bytes: input.bytes,
-    expectedSha256: sha256(input.bytes),
-    docType: input.docType,
+    type: input.type,
     referenceId: input.referenceId,
     sourceLabel: input.sourceLabel,
   });
   return waitFor(() => findByUploadKey(conn, uploadKey), `document ${uploadKey}`);
 }
 
-export type VersionInput = Omit<UploadInput, 'docType' | 'referenceId'>;
+export type VersionInput = Omit<UploadInput, 'type' | 'referenceId'>;
 
-/** Add a new version of a document; the previous version row is left unchanged. */
+/** Gateway: add a new version of a document; the previous version row is left unchanged. */
 export async function addDocumentVersion(conn: DbConnection, previousDocumentId: bigint, input: VersionInput): Promise<DocumentRow> {
+  checkBytes(input.bytes, input.mediaType);
   const uploadKey = input.uploadKey ?? randomUUID();
+  const stored = putFile(input.bytes);
   await conn.reducers.storeDocumentVersion({
+    companyId: input.companyId,
     uploadKey,
     previousDocumentId,
+    ...stored,
+    mediaType: input.mediaType,
     originalFilename: input.originalFilename,
-    mimeType: input.mimeType,
-    bytes: input.bytes,
-    expectedSha256: sha256(input.bytes),
     sourceLabel: input.sourceLabel,
   });
   return waitFor(() => findByUploadKey(conn, uploadKey), `document version ${uploadKey}`);
 }
 
 export function findByUploadKey(conn: DbConnection, uploadKey: string): DocumentRow | undefined {
-  return [...conn.db.documents.iter()].find(d => d.uploadKey === uploadKey);
+  return [...conn.db.documentsView.iter()].find(d => d.uploadKey === uploadKey);
 }
 
 export function getDocument(conn: DbConnection, id: bigint): DocumentRow | undefined {
-  return conn.db.documents.id.find(id) ?? undefined;
+  return [...conn.db.documentsView.iter()].find(d => d.id === id);
 }
 
-export function getFile(conn: DbConnection, id: bigint): FileRow | undefined {
-  return conn.db.files.id.find(id) ?? undefined;
-}
-
-export function getDocumentText(conn: DbConnection, documentId: bigint): DocumentTextRow | undefined {
-  return conn.db.documentText.documentId.find(documentId) ?? undefined;
+/** Documents with identical content (duplicate check). */
+export function findByContentHash(conn: DbConnection, contentHash: string): DocumentRow[] {
+  return [...conn.db.documentsView.iter()].filter(d => d.contentHash === contentHash);
 }
 
 /** List documents, oldest first. `latestOnly` hides versions that have been superseded. */
 export function listDocuments(
   conn: DbConnection,
-  filter: { docType?: DocType; referenceId?: string; latestOnly?: boolean } = {}
+  filter: { type?: DocumentType; referenceId?: string; latestOnly?: boolean } = {}
 ): DocumentRow[] {
-  const all = [...conn.db.documents.iter()];
+  const all = [...conn.db.documentsView.iter()];
   const superseded = new Set(all.map(d => d.supersedesDocumentId).filter((x): x is bigint => x !== undefined));
   return all
-    .filter(d => !filter.docType || d.docType === filter.docType)
+    .filter(d => !filter.type || d.type === filter.type)
     .filter(d => filter.referenceId === undefined || d.referenceId === filter.referenceId)
     .filter(d => !filter.latestOnly || !superseded.has(d.id))
     .sort((a, b) => (a.id < b.id ? -1 : 1));
@@ -93,7 +99,7 @@ export function listDocuments(
 
 /** Every version in a document's chain, version 1 first. Accepts any version's id. */
 export function getVersionHistory(conn: DbConnection, documentId: bigint): DocumentRow[] {
-  const all = [...conn.db.documents.iter()];
+  const all = [...conn.db.documentsView.iter()];
   let first = all.find(d => d.id === documentId);
   if (!first) return [];
   while (first.supersedesDocumentId !== undefined) {
@@ -109,29 +115,19 @@ export function getVersionHistory(conn: DbConnection, documentId: bigint): Docum
   }
 }
 
-/** Bytes and metadata for a document. */
-export function readDocument(conn: DbConnection, documentId: bigint): { document: DocumentRow; file: FileRow; bytes: Uint8Array } {
+/** Metadata plus bytes from the file store, verified against the recorded hash and size. */
+export function readDocument(conn: DbConnection, documentId: bigint): { document: DocumentRow; bytes: Uint8Array } {
   const document = getDocument(conn, documentId);
   if (!document) throw new Error(`Document ${documentId} not found`);
-  const file = getFile(conn, document.fileId);
-  if (!file) throw new Error(`File ${document.fileId} not found`);
-  return { document, file, bytes: file.bytes };
+  return { document, bytes: getFile(document.storageKey, document) };
 }
 
-/** Check stored bytes against the recorded size and hash, client-side (Node crypto). */
-export function verifyFileLocally(conn: DbConnection, fileId: bigint): { ok: boolean; byteSize: number; sha256: string } {
-  const file = getFile(conn, fileId);
-  if (!file) throw new Error(`File ${fileId} not found`);
-  const actual = sha256(file.bytes);
-  return { ok: file.bytes.length === file.byteSize && actual === file.sha256, byteSize: file.bytes.length, sha256: actual };
-}
-
-/** Ask the database to recompute size and hash server-side. Rejects on mismatch. */
-export function verifyFileOnServer(conn: DbConnection, fileId: bigint): Promise<void> {
-  return conn.reducers.verifyStoredFile({ fileId });
-}
-
-/** Save (or replace) extracted text for a document. For future extraction agents. */
-export function saveDocumentText(conn: DbConnection, documentId: bigint, text: string, extractionStatus: 'PENDING' | 'EXTRACTED' | 'FAILED') {
-  return conn.reducers.storeDocumentText({ documentId, text, extractionStatus });
+/** Re-hash a document's stored bytes. */
+export function verifyDocument(conn: DbConnection, documentId: bigint): { ok: boolean; error?: string } {
+  try {
+    readDocument(conn, documentId);
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
 }

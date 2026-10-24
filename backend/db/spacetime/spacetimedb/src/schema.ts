@@ -1,35 +1,64 @@
-// Document-storage schema. This is the stable contract other components (agents, UI) build on.
-// Rows in `files` and `documents` are never updated or deleted: a change is a new version row.
+// Document-storage schema, following the implementation brief (Accrual_Correction_Brief, p.3):
+// - Tables stay private. Clients read through views that check ctx.sender against the configured
+//   gateway/worker identities (see index.ts).
+// - Original file bytes live on a persistent server volume; documents reference them by
+//   storageKey and contentHash. No file bytes are stored in SpacetimeDB.
+// - Every business record belongs to the fixed demo company (settings.companyId).
 
 import { schema, table, t } from 'spacetimedb/server';
 
-/** Raw uploaded bytes plus integrity metadata. */
-const files = table(
-  { name: 'files', public: true },
+export const Account = t.object('Account', { code: t.string(), name: t.string() });
+
+/** Private. The identity that published the module; only it may configure settings and identities. */
+const moduleOwner = table(
+  { name: 'module_owner' },
   {
-    id: t.u64().primaryKey().autoInc(),
-    originalFilename: t.string(),
-    mimeType: t.string(),
-    bytes: t.byteArray(),
-    byteSize: t.u32(),
-    sha256: t.string().index('btree'),
+    id: t.u32().primaryKey(),
+    identity: t.identity(),
+  }
+);
+
+/** Private. Single row (id = 0): fixed demo company and accounting policy. No memberships table. */
+const settings = table(
+  { name: 'settings' },
+  {
+    id: t.u32().primaryKey(),
+    companyId: t.string(),
+    currency: t.string(),
+    expenseAccount: Account,
+    liabilityAccount: Account,
+    policyVersion: t.string(),
+  }
+);
+
+/** Private. Configured server identities: GATEWAY (Next.js server) and WORKER (Node agent worker). */
+const serviceIdentity = table(
+  { name: 'service_identity' },
+  {
+    identity: t.identity().primaryKey(),
+    role: t.string(),
+    label: t.string(),
     createdAt: t.timestamp(),
   }
 );
 
 /**
- * One version of a logical document. Version 1 has no supersedesDocumentId; version N+1 points
- * at version N. uploadKey is a caller-chosen idempotency key so retries never create duplicates.
+ * Private. One version of a source document. Bytes are on the file store at `storageKey`.
+ * Rows are never updated or deleted; a new version points at its predecessor.
  */
 const documents = table(
-  { name: 'documents', public: true },
+  { name: 'documents' },
   {
     id: t.u64().primaryKey().autoInc(),
-    fileId: t.u64().index('btree'),
-    docType: t.string().index('btree'),
-    referenceId: t.option(t.string()),
+    companyId: t.string().index('btree'),
+    storageKey: t.string(),
+    type: t.string().index('btree'),
     version: t.u32(),
     contentHash: t.string().index('btree'),
+    byteLength: t.u32(),
+    mediaType: t.string(),
+    originalFilename: t.string(),
+    referenceId: t.option(t.string()),
     sourceLabel: t.string(),
     supersedesDocumentId: t.option(t.u64()),
     uploadKey: t.string().unique(),
@@ -37,16 +66,6 @@ const documents = table(
   }
 );
 
-/** Optional extracted text for a document (one row per document; may be replaced). */
-const documentText = table(
-  { name: 'document_text', public: true },
-  {
-    documentId: t.u64().primaryKey(),
-    text: t.string(),
-    extractionStatus: t.string(),
-    createdAt: t.timestamp(),
-  }
-);
-
-const spacetimedb = schema({ files, documents, documentText });
+const spacetimedb = schema({ moduleOwner, settings, serviceIdentity, documents });
 export default spacetimedb;
+export { documents, settings };

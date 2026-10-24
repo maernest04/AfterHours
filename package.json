@@ -10,6 +10,7 @@
     "db:reset": "node --env-file-if-exists=.env scripts/db.mjs reset",
     "db:generate": "node --env-file-if-exists=.env scripts/db.mjs generate",
     "db:sql": "node --env-file-if-exists=.env scripts/db.mjs sql",
+    "db:bootstrap": "tsx --env-file-if-exists=.env backend/db/seed/bootstrap.ts",
     "db:seed": "tsx --env-file-if-exists=.env backend/db/seed/seed.ts",
     "smoke": "tsx --env-file-if-exists=.env backend/db/test/smoke.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p backend/db/spacetime/spacetimedb"

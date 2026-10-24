@@ -9,10 +9,20 @@ import {
   type AlgebraicTypeType as __AlgebraicTypeType,
   type Infer as __Infer,
 } from "spacetimedb";
+import {
+  Account,
+} from "./types";
+
 
 export default __t.row({
-  documentId: __t.u64().primaryKey().name("document_id"),
-  text: __t.string(),
-  extractionStatus: __t.string().name("extraction_status"),
-  createdAt: __t.timestamp().name("created_at"),
+  id: __t.u32().primaryKey(),
+  companyId: __t.string().name("company_id"),
+  currency: __t.string(),
+  get expenseAccount() {
+    return Account.name("expense_account");
+  },
+  get liabilityAccount() {
+    return Account.name("liability_account");
+  },
+  policyVersion: __t.string().name("policy_version"),
 });

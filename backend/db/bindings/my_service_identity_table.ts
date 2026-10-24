@@ -11,11 +11,6 @@ import {
 } from "spacetimedb";
 
 export default __t.row({
-  id: __t.u64().primaryKey(),
-  originalFilename: __t.string().name("original_filename"),
-  mimeType: __t.string().name("mime_type"),
-  bytes: __t.byteArray(),
-  byteSize: __t.u32().name("byte_size"),
-  sha256: __t.string().name("sha_256"),
-  createdAt: __t.timestamp().name("created_at"),
+  role: __t.string(),
+  label: __t.string(),
 });

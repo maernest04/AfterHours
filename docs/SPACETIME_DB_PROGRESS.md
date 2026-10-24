@@ -1,45 +1,51 @@
 # SpacetimeDB progress
 
-Status as of 2026-10-24. Nothing has been committed yet.
+Status as of 2026-10-24.
 
 ## Summary
-SpacetimeDB is now the datastore for the project, and **document storage works locally**. The smoke test passes 13/13 against `http://localhost:3000`, database `accrual-docs`. Setup and handoff details are in [SPACETIMEDB_DOCUMENT_STORAGE_SETUP.md](SPACETIMEDB_DOCUMENT_STORAGE_SETUP.md).
+SpacetimeDB is the project's sole authoritative state store, and **document storage works locally**, following the revised implementation brief (SpacetimeDB edition). The smoke test passes 14/14 against `http://localhost:3000`, database `accrual-docs`. Matthew's control-plane handlers work end to end through our adapter, and his code is unchanged. Setup and handoff details are in [SPACETIMEDB_DOCUMENT_STORAGE_SETUP.md](SPACETIMEDB_DOCUMENT_STORAGE_SETUP.md).
 
 ## How we got here
-1. **Database choice.** The brief (`Accrual_Correction_Brief.pdf`) names Convex. The team chose **SpacetimeDB** as the single datastore. We considered and rejected splitting the work, with Convex holding files and SpacetimeDB holding data, because it adds two of every SDK and deploy target, and uploads can't be atomic across two databases.
-2. **First plan, abandoned.** This plan ported the brief's whole backend to SpacetimeDB: agents, job leases, calculator, proposals, approvals and CSV export. Part of that code was written, but none of it was run.
-3. **Scope correction.** The current phase covers only the document-storage foundation, and **all out-of-scope code was deleted**: agent tools, role stubs, the worker loop, accounting rules, workflow reducers and their 17 tables. That keeps the handoff clean for teammates who will build the agents.
+1. **Database choice.** The original brief named Convex. The team chose **SpacetimeDB** as the single datastore, and the brief was later revised to match. We rejected splitting the work between Convex for files and SpacetimeDB for data.
+2. **First plan, abandoned.** It ported the whole backend at once: agents, leases, calculator, approvals and export. That code was deleted unrun when the scope narrowed to document storage.
+3. **Document storage v1.** File bytes lived in a SpacetimeDB `files` table, all tables were public, and any client could write. It worked (10/10 checks).
+4. **Alignment with the control plane** (Matthew's commit 1d87f4d), **without changing his files**:
+   - we adopted his document types (`LEDGER`, `ACCRUAL`) and his 10 MiB limit
+   - we added `backend/db/repositories/data_plane.ts`, which implements his `DataPlane` port
+5. **Realignment with the revised brief** (current state). The brief now specifies the process boundaries, and we followed them exactly:
 
-## What was built (this phase)
+   | Brief (p.2-3) | Now |
+   |---|---|
+   | Files on a persistent server volume, referenced by storageKey + hash | Content-addressed file store (`data/files/`, `storageKey = sha256/<hash>`). **No bytes in SpacetimeDB.** The `files` table, the in-module SHA-256 and the `verify_stored_file` reducer were removed. |
+   | Tables stay private; public views check `ctx.sender` against configured gateway/worker identities | All tables private. `documents_view`, `settings_view` and `my_service_identity` filter by caller |
+   | Browser → Next.js gateway using a server-held identity; worker has a separate identity | `GATEWAY` and `WORKER` service identities, registered by the owner (`npm run db:bootstrap`); tokens in `backend/.secrets/` |
+   | Reducers check the caller | Document writes are gateway-only; settings and identity registration are owner-only |
+   | documents: `companyId, storageKey, type, version, contentHash` | Exactly those, plus versioning, idempotency and file metadata |
+   | settings: fixed companyId, currency, accounts, policyVersion; no memberships | `settings` table + `configure_settings` reducer |
+   | Bind all operations to the fixed demo company | Reducers and the adapter reject any other `companyId` |
+   | (not in brief) `document_text` | Removed |
+
+   Matthew's `StoredFile { storageKey, contentHash, byteLength, mediaType }` and `CompanySettings` already matched the revised brief, so his code needed no change. We also implemented `settings.get`.
+
+## Current state
 | Area | Result |
 |---|---|
-| Tooling | SpacetimeDB CLI 2.13.0 installed on Windows, local server running, CLI logged in to the local server only |
-| Module | `files`, `documents` and `document_text` tables, plus the `store_document`, `store_document_version`, `verify_stored_file` and `store_document_text` reducers |
-| Integrity | The server computes SHA-256 in pure TS. Uploads can pass `expectedSha256`, and a mismatch rejects the upload. A verify reducer recomputes the size and hash |
-| Versioning | Each new row points at its predecessor through `supersedes_document_id`. Old rows are never mutated. Only the latest version can be superseded, and identical content is rejected |
-| Idempotency | A caller-chosen `upload_key` (unique) means a retried upload never duplicates |
-| Node API | `backend/db/repositories/documents.ts` provides upload, version, get, read, list (by type, reference or latest only), history, verify and text |
-| Seed | 6 synthetic Acme documents (contract, amendment, timesheet, invoices, ledger, accrual) plus a v2 of the timesheet, under reference `DEMO-ACME-2026-09`. Running it again creates no duplicates |
-| Smoke test | 13/13 checks pass: upload, fetch with identical bytes, client and server verification, a bad hash rejected, invalid type and MIME type rejected, idempotent retry, v2 without mutating v1, invalid versioning rejected, list filters, extracted text, and three control-plane integration checks |
-| Scripts | `db:start`, `db:install`, `db:publish`, `db:reset`, `db:generate`, `db:sql`, `db:seed`, `smoke` and `typecheck`. The database name and URI come from environment variables |
+| Module | 4 private tables (`documents`, `settings`, `service_identity`, `module_owner`), 4 reducers, 3 views |
+| File store | `backend/db/repositories/file_store.ts`: atomic, content-addressed writes; every read is re-hashed and size-checked |
+| Node API | `documents.ts` (upload, version, get, read, list, history, duplicate lookup, verify), `client.ts` (`connectService('gateway' \| 'worker')`), `data_plane.ts` (`imports.upload`, `evidence.readDocument`, `settings.get`) |
+| Scripts | `db:start`, `db:install`, `db:publish`, `db:reset`, `db:generate`, `db:sql`, **`db:bootstrap`**, `db:seed`, `smoke` and `typecheck`, all driven by environment variables |
+| Seed | 6 synthetic Acme documents (contract, amendment, timesheet, invoices, ledger, accrual) plus timesheet v2, uploaded via the gateway. Idempotent |
+| Smoke | 14/14 checks pass:<br>• storage on the file store, verified reads, and tamper detection<br>• metadata validation<br>• gateway-only writes, owner-only configuration, and views hidden from unregistered clients<br>• idempotent retries, versioning, and list filters<br>• control-plane upload, read and settings, a 10 MiB upload, and the adapter's rejections |
+| Matthew's tests | 6/6 pass (they need Node 22.18+, or `--experimental-strip-types`) |
 
-## Alignment with the control plane (Matthew's commit 1d87f4d)
-That commit added `backend/control_plane/`: request validation plus a `DataPlane` port. We aligned the database to it **without changing any of his files**:
-- **Document types:** now exactly his `DocumentType` list. `LEDGER_EXPORT` became `LEDGER`, and `ACCRUAL` was added.
-- **Upload limit:** raised from 2 MB to his 10 MiB.
-- **Adapter:** `backend/db/repositories/data_plane.ts` implements `imports.upload` and `evidence.readDocument`, using string IDs at the boundary. The smoke test calls his real API handlers through it.
-- **Root config:** the root `tsconfig.json` now allows `.ts` import extensions, so it type-checks his folder as written.
-- **Still to agree on (later phases):** his `worker.claim` takes a `jobId` and his job statuses have no leased state, whereas the brief has the server issue leases.
-
-## Learned about SpacetimeDB 2.13 (TypeScript modules)
-- Reducers are transactional and deterministic, and **they return no data**. Clients read through subscriptions or `spacetime sql`, so the repository helpers wait for the replicated row identified by `upload_key`.
-- The module runtime has `TextEncoder` but not `node:crypto`, hence the pure-TS SHA-256.
-- `t.byteArray()` stores raw bytes in the row. That suits demo-sized files, which we cap at 10 MiB, the control plane's limit. A 10 MiB upload takes about 1 second locally.
-- In the generated client bindings, the unique-index accessor on `upload_key` has no `.find()`, so the client looks the row up by scanning instead.
-- Database names can't contain underscores.
-- Procedures are still marked unstable, so this phase doesn't use them.
+## Learned about SpacetimeDB 2.13 (TypeScript)
+- Reducers are transactional and deterministic, and **they return no data**. The gateway reads results through its view subscription, so the repository waits for the row identified by `upload_key`.
+- Private tables don't appear in the generated client bindings. Only views and reducers do. The owner can still query private tables with `spacetime sql`.
+- Views get `ctx.sender` plus read-only `ctx.db`, which is how the brief's "views check `ctx.sender` against configured identities" works.
+- `init` runs as the publishing identity, so it's the place to record the owner. `spacetime login show --token` gives scripts that owner's token.
+- Database names can't contain underscores. Procedures are still marked unstable, so we don't use them.
 
 ## Open items for the team
-- `.env.example` in the repo root was written by a teammate. It still describes **Convex as authoritative** and sets `NEXT_PUBLIC_SPACETIMEDB_DATABASE=accrual_realtime`, which is an invalid name because of the underscore. Update it to match the new direction (`SPACETIMEDB_URI`, `SPACETIMEDB_DATABASE=accrual-docs`).
-- An earlier experimental database named `accrual` still exists on the local server. It's harmless; remove it with `spacetime delete accrual --server local`.
-- Next phases: agents, cases and the accounting workflow. Build them as new tables and reducers that reference `documents.id`, following section 10 of the setup doc.
+- **Next phases:** follow the brief's backend contract on p.4. That covers `finalize_import`, `start_review`, `claim_job`, `heartbeat_job`, `complete_job`, `ask_question`, `resolve_exception`, `build_proposal`, `decide_review`, `authorize_export`, `finalize_export`, and the scheduled sweep reducer. Every reducer checks its caller, and every table stays private behind views.
+- **The worker lease flow:** the brief's "subscribed workers compete through atomic `claim_job`" fits Matthew's `worker.claim(jobId)` as it stands, so his code doesn't need to change.
+- **Leftover database:** an earlier experimental database `accrual` still exists on the original dev machine. Remove it with `spacetime delete accrual --server local`.
