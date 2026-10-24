@@ -1,4 +1,10 @@
 services:
+  frontend:
+    build: ./frontend
+    ports:
+      - "127.0.0.1:${FRONTEND_PORT:-5173}:5173"
+    init: true
+
   api:
     build: ./backend/api
     ports:

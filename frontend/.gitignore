@@ -1,0 +1,7 @@
+node_modules/
+dist/
+*.tsbuildinfo
+.env.local
+# The root ignores runtime data/ directories; this one is frontend source.
+!src/data/
+!src/data/**
