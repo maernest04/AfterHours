@@ -3,8 +3,8 @@
 Agents run in a separate Python worker process. The database, job helpers and
 read-only tools are implemented. The Factory Investigation handler, leased worker
 and gateway calculator are implemented; see the [handoff](INVESTIGATION.md) for
-setup, teammate contracts, commands and limitations. EXTRACTION and MATCHING
-handlers remain to build.
+setup, teammate contracts, commands and limitations. The Bitdeer EXTRACTION
+handler is implemented; see [EXTRACTION.md](EXTRACTION.md). MATCHING remains to build.
 
 - `EXTRACTION` (Bitdeer): extract source-linked facts from contracts, amendments
   and PDFs. Structured CSV/JSON is parsed by code during import.
