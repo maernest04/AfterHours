@@ -1,11 +1,23 @@
 # Development only: tests can seed synthetic cases, so they need gateway and file writes.
 # Production matching receives only a worker token and read-only files.
 services:
+  matching-live-tests:
+    extends:
+      service: matching-tests
+    profiles: !override ["live-tests"]
+    tmpfs: !override
+      - /tmp:exec
+    environment:
+      AFTERHOURS_LIVE_FACTORY: "1"
+      FACTORY_API_KEY: ${FACTORY_API_KEY:-}
+      FACTORY_MODEL_ID: ${FACTORY_MODEL_ID:-}
+    command: ["python", "-m", "unittest", "discover", "-s", "/app/tests", "-p", "test_matching_factory_live.py", "-v"]
+
   matching-tests:
     extends:
       file: compose.yaml
       service: matching
-    profiles: ["tests"]
+    profiles: !override ["tests"]
     environment:
       AFTERHOURS_LIVE_TESTS: "1"
       AFTERHOURS_DROID_TESTS: "1"

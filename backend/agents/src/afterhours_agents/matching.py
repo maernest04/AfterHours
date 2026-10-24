@@ -24,6 +24,18 @@ Link invoice lines only for the same contractor and overlapping service dates. D
 POSTED from UNPOSTED: a received invoice is evidence, not proof of a posted expense.
 Do not arbitrarily choose between competing invoice lines or over-allocate invoice minutes.
 Uninvoiced approved work is valid accrual evidence: an empty invoiceLineIds is allowed.
+PENDING/REJECTED timesheet rows are deliberately excluded from workItems. Ignore them;
+do not ask whether they might become approved later. Likewise UNPOSTED invoices and
+uninvoiced work are normal: do not ask whether an invoice has since been posted.
+Use the supplied snapshot as of the review, not hypothetical future state changes.
+Unrelated contractor/vendor/period rows are distractors to exclude, not questions.
+Only raise questions about a concrete unresolved inconsistency in eligible work,
+governing terms, conflicting candidate identities or supporting authority.
+The original accrual can differ from the cost implied by supported work/rates:
+that is expected correction input for the downstream calculator. When a supplied
+signed amendment explains a rate change, do not ask to reconcile the original
+accrual with the new work cost. The calculator handles that difference and nets
+corroborated posted invoices later; matching does not prepare the correction.
 Link ledger records only for the case vendor and posting period; distinguish the original
 accrual from invoice postings. Never equate equal amounts with identity.
 

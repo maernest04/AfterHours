@@ -52,6 +52,25 @@ restoring environment-configured policy. Run it only on an idle local database:
 AFTERHOURS_LIVE_TESTS=1 AFTERHOURS_OWNER_TESTS=1 uv run --project backend/agents python -m unittest discover -s backend/agents/tests -v
 ```
 
+To evaluate model quality with **six actual Factory calls**, configure the key/model
+in `.env` and explicitly run the live suite:
+
+```sh
+docker compose -f compose.yaml -f backend/agents/compose.test.yaml run --build --rm matching-live-tests
+```
+
+It creates fresh synthetic cases, checks persisted `LIVE` results, exact invoice/
+ledger links, amendment date boundaries and investigation routing. Clean cases
+must not escalate merely because unrelated timesheets are unapproved or invoices
+are unposted. Ambiguities must surface questions instead of guessed allocations.
+This suite uses Factory credits; default replay tests skip it.
+
+On 2026-10-24, all six scenarios passed with `gpt-6-luna-fast` using real
+Factory inference and persisted `LIVE` matching results. Prompt refinements
+prevented false escalation of excluded timesheet rows, unposted invoices and
+amendment-explained accrual differences that belong to the calculator. This is
+coverage of the synthetic matching scenarios, not a completed approval/export E2E.
+
 For live matching, put `FACTORY_API_KEY` and `FACTORY_MODEL_ID` in the git-ignored
 root `.env`. Build the image, then run one case from the seed's printed IDs:
 
