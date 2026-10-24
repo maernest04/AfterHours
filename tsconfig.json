@@ -2,14 +2,25 @@
   "compilerOptions": {
     "strict": true,
     "target": "ES2022",
-    "lib": ["ES2022", "DOM"],
+    "lib": [
+      "ES2022",
+      "DOM"
+    ],
     "module": "ESNext",
     "moduleResolution": "bundler",
-    "types": ["node"],
+    "types": [
+      "node"
+    ],
     "skipLibCheck": true,
     "noEmit": true,
-    "isolatedModules": true
+    "isolatedModules": true,
+    "allowImportingTsExtensions": true
   },
-  "include": ["backend/**/*.ts"],
-  "exclude": ["backend/db/spacetime/**", "node_modules"]
+  "include": [
+    "backend/**/*.ts"
+  ],
+  "exclude": [
+    "backend/db/spacetime/**",
+    "node_modules"
+  ]
 }

@@ -9,10 +9,11 @@ export default spacetimedb;
 
 type Ctx = ReducerCtx<InferSchema<typeof spacetimedb>>;
 
-const DOC_TYPES = ['CONTRACT', 'AMENDMENT', 'TIMESHEET', 'INVOICE', 'LEDGER_EXPORT', 'OTHER'];
+// Matches DocumentType in backend/control_plane/contracts.ts.
+const DOC_TYPES = ['ACCRUAL', 'CONTRACT', 'AMENDMENT', 'TIMESHEET', 'INVOICE', 'LEDGER', 'OTHER'];
 const MIME_TYPES = ['text/plain', 'text/csv', 'application/json', 'application/pdf'];
 const EXTRACTION_STATUSES = ['PENDING', 'EXTRACTED', 'FAILED'];
-const MAX_BYTES = 2 * 1024 * 1024;
+const MAX_BYTES = 10 * 1024 * 1024; // Matches parameterLimits.maxUploadBytes in backend/control_plane.
 
 function requireNonEmpty(value: string, field: string, max = 255): string {
   const v = value.trim();

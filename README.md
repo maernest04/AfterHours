@@ -1,8 +1,9 @@
 # AfterHours
 
-Starter structure for a frontend and an agent-based backend. This is a folder
-and documentation skeleton; application code, frameworks, and infrastructure
-have not been selected yet.
+Accrual correction assistant (Cal Hacks 13). The repo has a frontend and an
+agent-based backend. Implemented so far: SpacetimeDB document storage
+(`backend/db`) and control-plane request validation (`backend/control_plane`).
+The rest of the tree is still a skeleton.
 
 ## Structure
 
@@ -49,7 +50,27 @@ See [frontend responsibilities](frontend/README.md) and
 
 ## Getting started
 
-Choose frontend and backend runtimes, then implement a small path through the
-system: a health endpoint, a single agent workflow, persisted run status, and a
-frontend screen to start and inspect a run. Add dependency manifests and run
-commands when those runtimes are selected.
+### Database (SpacetimeDB document storage)
+
+The database layer is implemented and runs locally. Follow
+[docs/SPACETIMEDB_DOCUMENT_STORAGE_SETUP.md](docs/SPACETIMEDB_DOCUMENT_STORAGE_SETUP.md).
+In short:
+
+```powershell
+npm install; npm run db:install
+spacetime start                      # separate terminal, leave running
+npm run db:publish; npm run db:generate; npm run db:seed; npm run smoke   # expect 13/13
+```
+
+Progress notes: [docs/SPACETIME_DB_PROGRESS.md](docs/SPACETIME_DB_PROGRESS.md).
+
+### Control plane
+
+Request validation and the `DataPlane` interface live in
+[backend/control_plane](backend/control_plane/README.md). Run its tests from that folder
+with `npm test` (requires Node 22.18+).
+
+### Not built yet
+
+The agents (extraction, matching, investigation), orchestrator, accounting
+calculations, review UI and exports.

@@ -1,0 +1,11 @@
+{
+  "_note": "SYNTHETIC DEMO DOCUMENT - existing accrual export",
+  "entryId": "ACR-2026-09-ACME",
+  "vendorId": "V-ACME",
+  "vendorName": "Acme Contracting (SYNTHETIC)",
+  "servicePeriod": { "from": "2026-09-01", "to": "2026-09-30" },
+  "postingPeriod": "2026-09",
+  "status": "POSTED",
+  "amountCents": "700000",
+  "currency": "USD"
+}

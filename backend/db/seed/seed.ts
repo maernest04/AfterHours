@@ -15,7 +15,8 @@ const SEED: Array<{ key: string; file: string; mimeType: string; docType: DocTyp
   { key: 'seed:acme-amendment-1', file: 'acme_amendment_1.txt', mimeType: 'text/plain', docType: 'AMENDMENT' },
   { key: 'seed:acme-timesheet-2026-09', file: 'acme_timesheet_2026-09_v1.csv', mimeType: 'text/csv', docType: 'TIMESHEET' },
   { key: 'seed:acme-invoices-2026-08', file: 'acme_invoices_2026-08.csv', mimeType: 'text/csv', docType: 'INVOICE' },
-  { key: 'seed:ledger-export-2026-09', file: 'ledger_export_2026-09.csv', mimeType: 'text/csv', docType: 'LEDGER_EXPORT' },
+  { key: 'seed:ledger-2026-09', file: 'ledger_2026-09.csv', mimeType: 'text/csv', docType: 'LEDGER' },
+  { key: 'seed:acme-accrual-2026-09', file: 'acme_accrual_2026-09.json', mimeType: 'application/json', docType: 'ACCRUAL' },
 ];
 
 const read = (file: string) => new Uint8Array(readFileSync(join(DIR, file)));
