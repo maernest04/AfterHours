@@ -9,6 +9,8 @@ from afterhours_db.cases import is_awaiting_proposal, list_cases, start_review
 from afterhours_db.jobs import claim_job, list_claimable_jobs
 from afterhours_agents.factory import FactoryProvider
 from afterhours_agents.worker import run_once as run_matching
+from afterhours_extraction.provider import bitdeer_session
+from afterhours_extraction.worker import run_job as run_extraction
 from afterhours_investigation.factory import factory_session
 from afterhours_investigation.worker import run_job as run_investigation
 
@@ -35,14 +37,28 @@ async def live_investigation_session():
         yield decide
 
 
-async def _investigate(db, job, session, model_run, timeout, stop):
+@asynccontextmanager
+async def live_extraction_session():
+    if not os.getenv('BITDEER_API_KEY'):
+        raise ValueError('Set BITDEER_API_KEY before running extraction')
+    async with bitdeer_session() as decide:
+        yield decide
+
+
+def extraction_configured():
+    return bool(os.getenv('BITDEER_API_KEY'))
+
+
+async def _investigate(db, job, session, model_run, timeout, stop, runner=None):
+    runner = runner or run_investigation   # resolved at call time so tests can patch it
+
     async def work():
         # Provider setup must succeed before acquiring a lease.
         async with session() as decide:
             if stop.is_set():
                 return None
             lease = claim_job(db, job['id'], job['case_id'], job['case_revision'])
-            return await run_investigation(db, lease, decide, model_run=model_run, timeout=timeout)
+            return await runner(db, lease, decide, model_run=model_run, timeout=timeout)
 
     async def wait_for_shutdown():
         while not stop.is_set():
@@ -66,11 +82,15 @@ async def _investigate(db, job, session, model_run, timeout, stop):
 def run_cycle(gateway_db, worker_db, *, case_id=None, max_jobs=10, stop=None,
               matching_provider_factory=live_matching_provider,
               investigation_session=live_investigation_session, investigation_model_run='LIVE',
-              investigation_timeout=180):
+              investigation_timeout=180, extraction_session=None, extraction_model_run='LIVE',
+              extraction_timeout=240):
     """Recover imports, then attempt at most max_jobs ready jobs, scoped optionally.
 
     Providers can be injected for offline replay tests. The runtime defaults only
-    to LIVE providers; it never synthesizes extraction or proposal results.
+    to LIVE providers; it never synthesizes extraction or proposal results. EXTRACTION
+    runs only when an extraction_session is passed (the CLI passes the live Bitdeer
+    session when BITDEER_API_KEY is set); otherwise extraction jobs stay queued and are
+    reported as blocked.
     Failed jobs retain their DB lease for the existing expiry/retry policy.
     """
     if max_jobs < 1 or (case_id is not None and case_id < 1):
@@ -79,6 +99,9 @@ def run_cycle(gateway_db, worker_db, *, case_id=None, max_jobs=10, stop=None,
         raise ValueError('Investigation provenance must be LIVE or REPLAYED')
     if not 0 < investigation_timeout <= 600:
         raise ValueError('Investigation timeout must be between 0 and 600 seconds')
+    if extraction_model_run not in {'LIVE', 'REPLAYED'} or not 0 < extraction_timeout <= 600:
+        raise ValueError('Extraction needs LIVE/REPLAYED provenance and a timeout of 1-600 seconds')
+    roles = ['MATCHING', 'INVESTIGATION'] + (['EXTRACTION'] if extraction_session else [])
     stop = stop if stop is not None else threading.Event()
     report = CycleReport()
     if stop.is_set():
@@ -100,7 +123,7 @@ def run_cycle(gateway_db, worker_db, *, case_id=None, max_jobs=10, stop=None,
 
     attempted = set()
     while len(attempted) < max_jobs and not stop.is_set():
-        jobs = [job for job in list_claimable_jobs(worker_db, roles=['MATCHING', 'INVESTIGATION'])
+        jobs = [job for job in list_claimable_jobs(worker_db, roles=roles)
                 if job['id'] not in attempted and (case_id is None or job['case_id'] == case_id)]
         if not jobs:
             break
@@ -110,6 +133,9 @@ def run_cycle(gateway_db, worker_db, *, case_id=None, max_jobs=10, stop=None,
             if job['role'] == 'MATCHING':
                 provider = matching_provider_factory()
                 result = run_matching(worker_db, provider, case_id=job['case_id'], cancel=stop)
+            elif job['role'] == 'EXTRACTION':
+                result = asyncio.run(_investigate(worker_db, job, extraction_session,
+                    extraction_model_run, extraction_timeout, stop, runner=run_extraction))
             else:
                 result = asyncio.run(_investigate(worker_db, job, investigation_session,
                     investigation_model_run, investigation_timeout, stop))
@@ -124,7 +150,7 @@ def run_cycle(gateway_db, worker_db, *, case_id=None, max_jobs=10, stop=None,
         for case in list_cases(gateway_db):
             if case_id is not None and case['id'] != case_id:
                 continue
-            if case['state'] == 'EXTRACTING':
+            if case['state'] == 'EXTRACTING' and not extraction_session:
                 report.blocked.append({'case_id': case['id'], 'stage': 'EXTRACTION'})
             elif is_awaiting_proposal(gateway_db, case['id']):
                 report.blocked.append({'case_id': case['id'], 'stage': 'PROPOSAL'})

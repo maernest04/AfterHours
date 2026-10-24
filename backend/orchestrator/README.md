@@ -7,8 +7,10 @@ remain the only workflow state; there is no second queue or state store.
 
 Current boundaries are intentional:
 
-- EXTRACTION is not implemented on main. Imported cases enter `EXTRACTING` with
-  a queued extraction job and remain there until a real worker is available.
+- EXTRACTION (Bitdeer) runs only when `BITDEER_API_KEY` is set (the CLI enables it). Without it,
+  imported cases enter `EXTRACTING` with a queued job and stay there, reported as
+  `blocked`; extraction is never faked. With it, the cycle claims EXTRACTION jobs,
+  and MATCHING then follows through the normal database transitions.
 - Existing extracted fixtures can run MATCHING and, when questions remain,
   INVESTIGATION. Investigation reads the existing mock mailbox through scoped
   `AgentTools`; no real email integration or sending is enabled.
@@ -48,7 +50,8 @@ Required database settings use the existing SDK conventions:
 - `SPACETIMEDB_SECRETS_DIR`: gateway and worker tokens from bootstrap
 - `FILE_STORE_DIR`: the same evidence files written by the API
 
-LIVE jobs additionally need `FACTORY_API_KEY`, `FACTORY_MODEL_ID`, and the
+LIVE extraction needs `BITDEER_API_KEY` (optional `BITDEER_MODEL_ID`, `BITDEER_TOKEN_BUDGET`,
+`EXTRACTION_TIMEOUT_SECONDS`, default 240, max 600). LIVE matching/investigation additionally need `FACTORY_API_KEY`, `FACTORY_MODEL_ID`, and the
 installed Droid executable (`DROID_EXEC_PATH`, default `droid`). Both worker
 providers reject missing key/model before claiming work. Import recovery works
 without model credentials. Optional `MATCHING_TIMEOUT_SECONDS` (default 120)

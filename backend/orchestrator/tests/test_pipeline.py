@@ -1,4 +1,5 @@
 import asyncio
+import os
 from contextlib import asynccontextmanager
 from copy import deepcopy
 import threading
@@ -8,7 +9,7 @@ from datetime import datetime, timedelta, timezone
 
 from afterhours_db.jobs import JobLease
 
-from afterhours_orchestrator.pipeline import run_cycle, live_investigation_session
+from afterhours_orchestrator.pipeline import live_extraction_session, live_investigation_session, run_cycle
 
 
 class Database:
@@ -111,6 +112,40 @@ class CycleTests(unittest.TestCase):
         self.assertEqual([j['id'] for j in second.completed_jobs], [3])
         self.assertEqual(second.blocked, [{'case_id': 1, 'stage': 'PROPOSAL'}])
         self.assertEqual(db.jobs[1]['status'], 'QUEUED')
+
+    def test_extraction_runs_only_with_a_session_or_bitdeer_key_and_feeds_matching(self):
+        db = Database([case(1)])
+
+        async def extraction(db, lease, decide, *, model_run, timeout):
+            self.assertEqual(model_run, 'REPLAYED')
+            selected = next(j for j in db.jobs if j['id'] == lease)
+            selected['status'] = 'SUCCEEDED'
+            db.jobs.append(job(2, selected['case_id'], 'MATCHING'))
+            return deepcopy(selected)
+
+        @asynccontextmanager
+        async def session():
+            yield object()
+
+        with patch('afterhours_orchestrator.pipeline.run_extraction', side_effect=extraction),              patch('afterhours_orchestrator.pipeline.claim_job', side_effect=lambda db, jid, *_: jid),              patch('afterhours_orchestrator.pipeline.run_investigation'):
+            off = run_cycle(db, db, matching_provider_factory=unavailable)
+            self.assertEqual(off.blocked, [{'case_id': 1, 'stage': 'EXTRACTION'}])
+            self.assertEqual(db.jobs[0]['status'], 'QUEUED')
+            on = run_cycle(db, db, max_jobs=1, matching_provider_factory=unavailable,
+                           extraction_session=session, extraction_model_run='REPLAYED')
+        self.assertEqual([j['role'] for j in on.completed_jobs], ['EXTRACTION'])
+        self.assertEqual(on.errors, [])
+        self.assertEqual(on.blocked, [])
+        self.assertEqual(db.jobs[1]['status'], 'QUEUED')   # MATCHING waits for the next attempt
+
+    def test_live_extraction_requires_bitdeer_key(self):
+        async def start():
+            async with live_extraction_session():
+                pass
+        with patch.dict('os.environ', {}, clear=False):
+            os.environ.pop('BITDEER_API_KEY', None)
+            with self.assertRaises(ValueError):
+                asyncio.run(start())
 
     def test_shutdown_prevents_imports_and_claims(self):
         db = Database([case(1)])
