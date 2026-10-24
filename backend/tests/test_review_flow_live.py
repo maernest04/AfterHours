@@ -26,9 +26,15 @@ class LiveReviewFlowTests(unittest.TestCase):
         accrual = json.loads((SEED / 'acme_accrual_2026-09.json').read_text())
         accrual.update(entryId=unique, vendorId=vendor)
         ledger = (SEED / 'ledger_2026-09.csv').read_text().replace('ACR-2026-09-ACME', unique).replace('V-ACME', vendor)
+        # Make this success fixture satisfy the MSA's project-manager request clause.
+        # Missing authority should remain a real blocker, not a prompt assumption.
+        contract = (SEED / 'acme_msa.txt').read_text().replace(
+            'Authorized signatory:',
+            '4. Pat Lee is Northwind Demo Co\'s project manager. Timesheets approved by Pat Lee\n'
+            'constitute requested services under this agreement.\n\nAuthorized signatory:')
         files = [
             ('files', ('accrual.json', json.dumps(accrual).encode(), 'application/json')),
-            ('files', ('contract.txt', (SEED / 'acme_msa.txt').read_bytes(), 'text/plain')),
+            ('files', ('contract.txt', contract.encode(), 'text/plain')),
             ('files', ('timesheet.csv', (SEED / 'acme_timesheet_2026-09_v2.csv').read_bytes(), 'text/csv')),
             ('files', ('invoices.csv', (SEED / 'acme_invoices_2026-08.csv').read_bytes(), 'text/csv')),
             ('files', ('ledger.csv', ledger.encode(), 'text/csv')),

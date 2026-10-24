@@ -201,4 +201,11 @@ matching/investigation, and requires all three persisted results to be `LIVE`.
 The signed amendment is available only in the mock mailbox. The test checks API
 details/SSE and stops at the calculator handoff; it never approves or posts.
 It fails if provider configuration is missing instead of substituting replay.
+
+On 2026-10-24, the live flow reached the proposal handoff with all three stages
+stored as `LIVE`, all ten approved work items matched, and the mock-mail amendment
+visible through HTTP detail and SSE. One extraction lease expired; a scoped retry
+completed the case. A separate incomplete-authority fixture correctly remained
+`WAITING_FOR_INPUT`. The success fixture explicitly establishes the project
+manager's authorization; neither test bypasses contractual scope checks.
 Frontend build and test commands are in [frontend/README.md](frontend/README.md).

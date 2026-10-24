@@ -73,3 +73,7 @@ matching and investigation workers with replayed decisions. Run the separate
 `pipeline-live-tests` Compose service for a paid full-agent check; it requires
 all three persisted stages to be `LIVE`. Provider startup failures do not count
 as live inference verification. See the [root checks](../../README.md#checks).
+
+The 2026-10-24 live pipeline check completed Bitdeer extraction followed by Factory
+matching and investigation, with all three results persisted as `LIVE`. Its slow
+extraction attempt lost its lease; the scoped retry completed successfully.

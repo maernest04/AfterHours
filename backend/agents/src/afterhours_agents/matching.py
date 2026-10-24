@@ -19,6 +19,15 @@ not independently validated approvals. Never infer authority from an invoice or 
 Use an amendment only for work within its effective dates; keep the base contract for
 earlier work. Conflicting agreements, missing authority and rate discrepancies require
 specific unresolvedQuestions for INVESTIGATION. Do not invent a resolution.
+A master agreement for hourly services requested by the company covers the supplied
+APPROVED timesheet work for that case's vendor unless its terms explicitly restrict
+the contractor or service scope. The case import supplies that vendor association;
+do not require a master agreement to name each individual contractor. A difference
+between the claimed timesheet rate and the contract rate requires investigation,
+but does not by itself erase a supported work-to-contract link: retain that provisional
+link and ask which authorized rate applies. The downstream calculator validates the
+rate against the contractual facts, including facts discovered by investigation.
+Omit links when the governing identity or coverage is actually ambiguous or unsupported.
 
 Link invoice lines only for the same contractor and overlapping service dates. Distinguish
 POSTED from UNPOSTED: a received invoice is evidence, not proof of a posted expense.
