@@ -1,0 +1,21 @@
+# Development only: tests can seed synthetic cases, so they need gateway and file writes.
+# Production matching receives only a worker token and read-only files.
+services:
+  matching-tests:
+    extends:
+      file: compose.yaml
+      service: matching
+    profiles: ["tests"]
+    environment:
+      AFTERHOURS_LIVE_TESTS: "1"
+      AFTERHOURS_DROID_TESTS: "1"
+      FACTORY_API_KEY: ""
+      FACTORY_MODEL_ID: ""
+    volumes:
+      - ./backend/.secrets/gateway.token:/run/afterhours/gateway.token:ro
+      - ./data/files:/app/data/files
+      - ./backend/agents/tests:/app/tests:ro
+    # Fake provider executables are generated here by subprocess contract tests.
+    tmpfs: !override
+      - /tmp:exec
+    command: ["python", "-m", "unittest", "discover", "-s", "/app/tests", "-v"]

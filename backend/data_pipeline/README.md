@@ -71,7 +71,7 @@ inference and handling ambiguous uploaded metadata are not implemented.
 
 ## Remaining integration
 
-The four public API routes still return explicit 501 stubs. Wire `create-review`
+Review listing reads the database; create/get/export remain explicit 501 stubs. Wire `create-review`
 to uploads, metadata extraction, `finalize_import` and `start_review`. Add real
 source connectors, structured PDF extraction and replay/freshness policies when
 those sources are introduced. The mock mailbox and backend Acme fixture are

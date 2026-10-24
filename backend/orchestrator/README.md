@@ -41,11 +41,13 @@ lost ownership, and record real model runs as `LIVE` or fixture replays as
 
 ## Remaining work
 
-- The polling worker loop, provider calls, concurrency limits, retry backoff and
-  graceful shutdown/recovery.
-- API integration; all four public review endpoints remain explicit 501 stubs.
-- Calculator and `build_proposal`, clarification/exception handling, reviewer
-  decisions and approvals, and authorized CSV export.
+- Extraction worker and broader orchestration/concurrency. Investigation has a
+  case-scoped worker in `afterhours_investigation`.
+  MATCHING now has a single-job Python polling loop, independent heartbeats,
+  bounded Factory calls and graceful shutdown in `backend/agents`.
+- API workflow integration; listing works, create/get/export remain explicit 501 stubs.
+- Connect the implemented gateway `build_proposal` calculator to scheduling;
+  clarification/exception handling, authoritative reviewer decisions and CSV export remain.
 - Revision bumps and invalidation when inputs change. Existing revision checks
   reject stale work, but changing inputs does not yet bump a case revision or
   cancel its old jobs/proposals automatically.

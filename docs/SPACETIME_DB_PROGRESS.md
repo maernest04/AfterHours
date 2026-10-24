@@ -71,13 +71,14 @@ existing stub/validation contracts, not a completed review workflow.
 
 ## Remaining work
 
-- Connect the four Python review API routes; they currently return explicit 501
-  responses after validation. The browser must use that API without receiving
-  database service credentials.
-- Implement EXTRACTION/MATCHING providers and role handlers, and connect the
-  orchestration service to the case-scoped Investigation worker and calculator.
-- Implement question delivery, reviewer approval decisions, export
-  authorization/finalization and CSV generation.
+- Connect create/get/export review operations; they still return explicit 501
+  responses. Review listing now reads the SDK with cursor pagination capped at 10.
+  The browser must use that API without receiving database credentials.
+- Implement extraction and broader orchestration. Matching now has a Factory
+  adapter, validated handler, heartbeats, polling worker and Docker/replay E2E.
+  Investigation and gateway proposals are implemented; live matching quality
+  verification remains pending Factory configuration.
+- Implement question delivery, reviewer decisions, export authorization and CSV generation.
 - Bump case revisions and invalidate old jobs/proposals when inputs change;
   current checks reject stale revisions, but automatic revision updates and
   cancellation are not implemented.

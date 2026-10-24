@@ -1,4 +1,4 @@
-"""Success contracts and synthetic OpenAPI examples. Handlers remain unimplemented."""
+"""Success contracts and synthetic OpenAPI examples, including pending operations."""
 
 import json
 from datetime import date
@@ -118,7 +118,7 @@ CSV_EXAMPLE = (
     "2026-10-23,review-1,2100,Accrued liabilities,0.00,700.00,USD,Synthetic accrual correction\r\n"
 )
 STUB_RESPONSE = {
-    501: {"description": "Not implemented yet. This is the current response for every valid request.",
+    501: {"description": "Not implemented yet. This operation's integration is pending.",
           "content": {"application/json": {"example": {"detail": {
               "code": "NOT_IMPLEMENTED", "operation": "<operation-name>",
               "message": "Backend integration is not connected yet.",

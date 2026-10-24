@@ -1,10 +1,10 @@
 # Agents
 
-Agents run in a separate Python worker process. The database, job helpers and
-read-only tools are implemented. The Factory Investigation handler, leased worker
-and gateway calculator are implemented; see the [handoff](INVESTIGATION.md) for
-setup, teammate contracts, commands and limitations. EXTRACTION and MATCHING
-handlers remain to build.
+Agents run in separate Python worker processes. Matching has a Factory provider,
+validated handler, polling worker and Docker service. The Investigation handler
+and gateway calculator are also implemented; see [their handoff](INVESTIGATION.md).
+Extraction remains separate work. Live inference requires Factory configuration;
+database E2E tests use explicitly REPLAYED model output.
 
 - `EXTRACTION` (Bitdeer): extract source-linked facts from contracts, amendments
   and PDFs. Structured CSV/JSON is parsed by code during import.
@@ -16,7 +16,77 @@ handlers remain to build.
 `implementations/` and `prompts/` are extension points. `tools/__init__.py`
 re-exports the implementation from `afterhours_db.tools`.
 
-## Python integration
+## Matching: seed, test and run
+
+Run from the repository root after database setup/bootstrap:
+
+```sh
+uv sync --project backend/agents
+uv run --project backend/agents python -m afterhours_agents.fixtures
+uv run --project backend/agents python -m unittest discover -s backend/agents/tests -v
+AFTERHOURS_LIVE_TESTS=1 uv run --project backend/agents python -m unittest discover -s backend/agents/tests -v
+```
+
+The seed prints case IDs for six synthetic scenarios: clean, amendment effective
+date boundary, missing amendment, ambiguous invoices, uninvoiced approved work,
+and conflicting contracts. Each includes two approved work items, an unapproved
+row, unrelated invoice records and ledger records from another vendor/period.
+Extraction results are marked `REPLAYED`; only matching jobs are prepared.
+Re-running a namespace preserves IDs and completed jobs. Use
+`--namespace matching-demo-v2` for a fresh set. No data is reset.
+
+Docker E2E uses the actual matching image, local database and mounted file store:
+
+```sh
+docker compose -f compose.yaml -f backend/agents/compose.test.yaml run --build --rm matching-tests
+```
+
+These tests require **no Factory key**. Hand-authored provider responses exercise
+real imports, job claims, validation, persistence and handoffs. They do not measure
+model accuracy. Unit checks execute fake provider processes to exercise JSON
+decoding, timeouts, cancellation and credential isolation. A host-only short-lease
+check needs the owner CLI and temporarily configures a one-second lease before
+restoring environment-configured policy. Run it only on an idle local database:
+
+```sh
+AFTERHOURS_LIVE_TESTS=1 AFTERHOURS_OWNER_TESTS=1 uv run --project backend/agents python -m unittest discover -s backend/agents/tests -v
+```
+
+For live matching, put `FACTORY_API_KEY` and `FACTORY_MODEL_ID` in the git-ignored
+root `.env`. Build the image, then run one case from the seed's printed IDs:
+
+```sh
+docker compose --profile agents build matching
+docker compose --profile agents run --rm matching afterhours-matching --once --case-id 17
+```
+
+Replace `17` with your case ID. After checking that case, start the continuous
+worker with `docker compose --profile agents up -d matching`. It processes **all**
+queued MATCHING jobs, including synthetic cases left by tests. Stop it with
+`docker compose stop matching`. Missing key/model fails before a job is claimed.
+There is no silent mock fallback. `PROVIDER_MODE`/`DEMO_MODE` do not switch this
+worker to replay; replay lives only in test utilities.
+
+The Docker image installs Python dependencies with uv and includes a checksum-verified
+Factory Droid binary. For a host run, install Droid and set `DROID_EXEC_PATH` if
+it is not on PATH, then run `uv run --project backend/agents afterhours-matching`.
+The provider follows [Factory's headless CLI contract](https://docs.factory.com/droid-exec/overview).
+
+Implementation lives in `src/afterhours_agents/`: `matching.py` assembles scoped
+evidence and validates output; `factory.py` runs bounded inference with a minimal
+tool allowlist (`TodoWrite` bookkeeping only; no file/shell/web tools);
+`worker.py` owns a lease with independent heartbeats; `cli.py` polls with graceful
+shutdown; `fixtures.py` seeds synthetic cases. Matching reads imported governing
+documents and extracted/structured facts. Mailbox discovery belongs to investigation.
+
+Only proposed allocations are stored. No amounts are posted, approved or exported.
+Validation checks shape, IDs, citations, contractor/date/vendor/period relationships,
+invoice capacity, duplicate work and unresolved omissions/rates. It does not prove
+contractual authority or replace the future proposal validator. Provider errors,
+invalid results and lost leases never report success; DB expiry/retry handles
+another attempt (three attempts by default). Logs omit model payloads and secrets.
+
+## Python integration for other roles
 
 Follow the [setup guide](../../docs/SPACETIMEDB_DOCUMENT_STORAGE_SETUP.md), then
 install the SDK into the worker environment with `uv pip install -e backend/db`

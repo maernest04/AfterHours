@@ -1,4 +1,42 @@
 services:
+  approval-demo:
+    profiles: ["approval-demo"]
+    build: ./backend/approval_watcher
+    command: ["afterhours-approval-watcher", "--mock-fixture", "/app/examples/mock-inbox.json", "--once"]
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+
+  matching:
+    profiles: ["agents"]
+    build:
+      context: .
+      dockerfile: backend/agents/Dockerfile
+    environment:
+      SPACETIMEDB_URI: http://spacetimedb:3000
+      SPACETIMEDB_DATABASE: ${SPACETIMEDB_DATABASE:-accrual-docs}
+      COMPANY_ID: ${COMPANY_ID:-demo}
+      SPACETIMEDB_SECRETS_DIR: /run/afterhours
+      FILE_STORE_DIR: /app/data/files
+      FACTORY_API_KEY: ${FACTORY_API_KEY:-}
+      FACTORY_MODEL_ID: ${FACTORY_MODEL_ID:-}
+      MATCHING_TIMEOUT_SECONDS: ${MATCHING_TIMEOUT_SECONDS:-120}
+    volumes:
+      - ./backend/.secrets/worker.token:/run/afterhours/worker.token:ro
+      - ./data/files:/app/data/files:ro
+    depends_on:
+      spacetimedb:
+        condition: service_healthy
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+
   frontend:
     build: ./frontend
     ports:
@@ -6,7 +44,26 @@ services:
     init: true
 
   api:
-    build: ./backend/api
+    build:
+      context: .
+      dockerfile: backend/api/Dockerfile
+    # Match the worker's local-container token access; secrets stay read-only.
+    user: "0:0"
+    environment:
+      SPACETIMEDB_URI: http://spacetimedb:3000
+      SPACETIMEDB_DATABASE: ${SPACETIMEDB_DATABASE:-accrual-docs}
+      COMPANY_ID: ${COMPANY_ID:-demo}
+      SPACETIMEDB_SECRETS_DIR: /run/afterhours
+    volumes:
+      - ./backend/.secrets/gateway.token:/run/afterhours/gateway.token:ro
+    depends_on:
+      spacetimedb:
+        condition: service_healthy
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
     ports:
       - "127.0.0.1:${API_PORT:-8000}:8000"
     init: true
