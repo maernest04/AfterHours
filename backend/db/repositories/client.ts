@@ -1,5 +1,5 @@
 // Node-side SpacetimeDB connections. Each server process connects with its own persisted identity:
-// "gateway" (Next.js server / control plane) or "worker" (Node agent worker). Tokens live in
+// "gateway" (the API server) or "worker" (Node agent worker). Tokens live in
 // backend/.secrets/ (git-ignored) and never reach the browser. The module owner is the identity the
 // `spacetime` CLI published with; only db:bootstrap uses it.
 

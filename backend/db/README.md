@@ -25,9 +25,8 @@ Proposals, reviews and exports come in a later phase.
   - `parsers.ts` / `cases.ts`: import parsing and cases
   - `mailbox.ts`: the mock mailbox
   - `jobs.ts`: the worker's claim / heartbeat / complete
-  - `data_plane.ts`: implements the control plane's `DataPlane` port
 - `seed/`: `bootstrap.ts` does the owner setup (settings, job policy and service identities); `seed.ts` loads the demo Acme case and mailbox and leaves an EXTRACTION job queued.
 - `test/`: the end-to-end smoke test (`npm run smoke`).
 - `models/`, `migrations/`: unused. In SpacetimeDB, the schema lives in the module and migrations happen on publish.
 
-Other backend components (control plane, agents) call `repositories/` rather than the generated bindings directly.
+The application backend uses Python; integration with this TypeScript storage tooling is still pending. The Python API lives in `backend/api/` and currently returns explicit 501 stub errors. Each application service will run in its own local Docker container; database container configuration is still pending.

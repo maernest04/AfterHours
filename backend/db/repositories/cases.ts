@@ -1,7 +1,7 @@
 // Cases, import and evidence reads for the gateway (and read access for the worker).
-// Shapes returned to the control plane follow backend/control_plane/contracts.ts exactly.
+// Shapes follow ./contracts.ts.
 
-import type { CaseSummary, EvidenceFact, JobSummary } from '../../control_plane/contracts.ts';
+import type { CaseSummary, EvidenceFact, JobSummary } from './contracts';
 import type { DbConnection } from '../bindings/index';
 import { waitFor } from './client';
 import { readDocument, type DocumentRow } from './documents';
@@ -158,12 +158,4 @@ export function toEvidenceFact(f: FactRowDb): EvidenceFact {
     value: f.value,
     validationStatus: f.validationStatus as EvidenceFact['validationStatus'],
   };
-}
-
-/** Cursor pagination over id-ordered rows (cursor = last id returned). */
-export function paginate<T extends { id: string }>(items: T[], cursor: string | undefined, limit = 50): { items: T[]; nextCursor: string | null } {
-  const start = cursor ? items.findIndex(i => BigInt(i.id) > BigInt(cursor)) : 0;
-  const page = start < 0 ? [] : items.slice(start, start + limit);
-  const more = start >= 0 && start + limit < items.length;
-  return { items: page, nextCursor: more ? page[page.length - 1].id : null };
 }

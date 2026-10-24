@@ -7,6 +7,8 @@ Cal Hacks 13, Hyphenate track. The assistant helps accountants **check and fix a
 
 Initial scope: hourly contractor services, one company, USD.
 
+**Runtime direction:** backend services are **Python**, each in its own local Docker container. The SpacetimeDB module, its generated bindings and the Node tooling in `backend/db` (seed, smoke test, repositories) stay TypeScript. Python reaches the database over plain HTTP (see [Using the database from Python](#using-the-database-from-python)).
+
 **Source of truth:** `Accrual_Correction_Brief` (revised: SpacetimeDB edition). All data in this repo is **synthetic**.
 
 ---
@@ -15,14 +17,14 @@ Initial scope: hourly contractor services, one company, USD.
 
 | Area | Status | Owner / where |
 |---|---|---|
-| SpacetimeDB data layer: documents, cases and import, evidence, mock mailbox, job queue | ✅ Done, smoke 24/24 | `backend/db` |
-| Read-only agent tools (`searchEmails`, `readEmailThread`, `readAttachment`, `getCaseEvidence`) | ✅ Done | `backend/agents/tools` |
-| Control-plane request validation + `DataPlane` port | ✅ Done (Matthew) | `backend/control_plane` |
-| Control plane connected to the database (14 operations) | ✅ Done | `backend/db/repositories/data_plane.ts` |
+| SpacetimeDB data layer: documents, cases and import, evidence, mock mailbox, job queue | ✅ Done, smoke 23/23 | `backend/db` |
+| Read-only agent tools (`searchEmails`, `readEmailThread`, `readAttachment`, `getCaseEvidence`) | ✅ Done (TypeScript reference implementation) | `backend/agents/tools` |
+| Python review API: `create-review`, `list-review`, `get-review`, `export-review` | 🟡 Stubs: validate input, return 501 (Matthew) | `backend/api` |
+| API connected to the database | ⏳ Next. Python calls SpacetimeDB over HTTP | `backend/api` |
 | Agent worker loop + Extraction / Matching / Investigation handlers + prompts | ⏳ Next | `backend/agents`, `backend/orchestrator` |
 | Calculator + `build_proposal` + proposals | ⏳ Next (critical path) | `backend/db` |
-| Questions, reviews/approval, CSV export | ⏳ Next | `backend/db` + `backend/control_plane` |
-| Next.js gateway routes + reviewer UI | ⏳ Next | `frontend` |
+| Questions, approval, CSV export | ⏳ Next. The approval channel is an open question (see below) | `backend/db` + `backend/api` |
+| Reviewer UI | ⏳ Next | `frontend` |
 
 The first milestone ends at **"Approved – ready to export"** (brief p.2).
 
@@ -31,10 +33,10 @@ The first milestone ends at **"Approved – ready to export"** (brief p.2).
 ## Architecture
 
 ```text
-Browser ──► Next.js server gateway (control plane) ──► SpacetimeDB  (single source of truth)
-                 │ server-held GATEWAY identity            ▲  private tables; reducers check the caller;
-                 └─► file store (data/files)               │  views filter rows by ctx.sender
-Node worker (WORKER identity) ── claim_job / complete_job ─┘  + reads views and the file store
+Browser ──► Python API (FastAPI, backend/api) ──► SpacetimeDB  (single source of truth)
+                │ server-held GATEWAY identity          ▲  private tables; reducers check the caller;
+                └─► file store (data/files)             │  views filter rows by ctx.sender
+Python worker(s) (WORKER identity) ─ claim / complete ──┘  + read views and the file store
    └─ Bitdeer / Factory model calls run here, never inside the database
 ```
 
@@ -50,7 +52,7 @@ Node worker (WORKER identity) ── claim_job / complete_job ─┘  + reads vi
 
 | Tool | Version | Install / check |
 |---|---|---|
-| Node.js | 22.x (22.18+ to run the control-plane tests natively) | `node --version` |
+| Node.js | 22.x | `node --version` |
 | SpacetimeDB CLI | **2.13.x** | Windows: `iwr https://windows.spacetimedb.com -useb \| iex`. macOS/Linux: `curl -sSf https://install.spacetimedb.com \| sh`. Then **open a new terminal** and run `spacetime --version` |
 
 If the CLI isn't 2.13.x, run `spacetime version install 2.13.0` and then `spacetime version use 2.13.0`.
@@ -70,11 +72,11 @@ npm run db:generate     # regenerate TypeScript bindings
 npm run typecheck
 npm run db:bootstrap    # company settings, job policy, gateway + worker identities
 npm run db:seed         # demo Acme case + mock mailbox; leaves an EXTRACTION job QUEUED
-npm run smoke           # expect: 24/24 checks passed
+npm run smoke           # expect: 23/23 checks passed
 ```
 
 **It works when:**
-- `npm run smoke` prints `24/24 checks passed`
+- `npm run smoke` prints `23/23 checks passed`
 - the seed's last line reads `case 1 ACR-2026-09-ACME POSTED $7000 state EXTRACTING jobs [EXTRACTION:QUEUED]`
 
 ### 3. After pulling changes to the database module
@@ -98,10 +100,10 @@ npm run db:reset; npm run db:generate; npm run db:bootstrap; npm run db:seed
 | `db:bootstrap` | Owner setup: settings, job policy and expired-lease sweep, service identities (idempotent) |
 | `db:seed` | Load the synthetic demo (idempotent) |
 | `db:sql -- "<query>"` | Owner SQL on private tables, e.g. `npm run db:sql -- "SELECT id, role, status FROM jobs"` |
-| `smoke` | End-to-end smoke test (24 checks; can be re-run) |
+| `smoke` | End-to-end smoke test (23 checks; can be re-run) |
 | `typecheck` | Type-check the Node code and the module |
 
-Control-plane tests: `cd backend/control_plane; npm test`. On Node versions below 22.18, run `node --experimental-strip-types --test control_plane.test.mjs` instead.
+**Python API** (Matthew): `docker compose up --build -d api`, then open `http://localhost:8000/docs`. Setup and tests: [backend/api/README.md](backend/api/README.md).
 
 ---
 
@@ -178,19 +180,53 @@ const tools = createAgentTools(conn, { caseId: lease.caseId });         // backe
 await completeJob(conn, { ...ref, leaseToken: lease.leaseToken }, 'LIVE', agentOutput);
 ```
 
-The output follows the control plane's `AgentOutput` type. Evidence must be in `lease.allowedEvidenceIds`: the case's documents, the vendor's mailbox, and the current facts.
+The output is the `AgentOutput` type in `backend/db/repositories/contracts.ts`. Evidence must be in `lease.allowedEvidenceIds`: the case's documents, the vendor's mailbox, and the current facts.
 
-### Control plane / gateway
+### Using the database from Python
 
-```ts
-const gateway = await connectService('gateway');
-const dataPlane = createSpacetimeDataPlane(gateway.conn);               // backend/db/repositories/data_plane.ts
-await api.imports.upload(ctx, { filename, mediaType, bytes, type }, dataPlane);
+Python needs no client library: SpacetimeDB speaks HTTP. **Verified against this database:** reading views, calling reducers, a worker claiming a job and completing it with nested results (the case advanced to `MATCHING`), optional arguments, and rejection messages. The helper below is stdlib-only and was run as written.
+
+```python
+import json, urllib.request, urllib.error
+
+DB = "http://localhost:3000/v1/database/accrual-docs"       # SPACETIMEDB_URI + SPACETIMEDB_DATABASE
+
+def _req(path, token, body, content_type):
+    req = urllib.request.Request(f"{DB}{path}", data=body, method="POST",
+                                 headers={"Authorization": f"Bearer {token}", "Content-Type": content_type})
+    try:
+        with urllib.request.urlopen(req) as r:
+            return r.read()
+    except urllib.error.HTTPError as e:                      # a rejected reducer puts its message in the body
+        raise RuntimeError(e.read().decode()) from None
+
+def sql(token, query):
+    """Query the views your identity may see. Returns a list of dicts."""
+    result = json.loads(_req("/sql", token, query.encode(), "text/plain"))[0]
+    cols = [c["name"]["some"] for c in result["schema"]["elements"]]
+    return [dict(zip(cols, row)) for row in result["rows"]]
+
+def call(token, reducer, *args):
+    """Call a reducer. Arguments are positional, in the reducer's declared order."""
+    _req(f"/call/{reducer}", token, json.dumps(list(args)).encode(), "application/json")
 ```
 
-- **Done:** `imports.upload`/`finalize`, `cases.list`/`get`/`startReview`/`listJobs`/`subscribe`, `worker.claim`/`heartbeat`/`complete`, `evidence.list`/`readDocument` and `settings.get`.
-- **Not built yet:** everything else returns `DATA_PLANE_UNAVAILABLE`.
-- **`backend/control_plane/` is Matthew's code:** extend `data_plane.ts` instead of editing it.
+- **Tokens:** `backend/.secrets/gateway.token` (the API) and `backend/.secrets/worker.token` (agents), created by `npm run db:bootstrap`. Services use their own identity; **never use the owner token**. Tables are private, so use the `*_view` names (`SELECT … FROM jobs_view`).
+- **Worker flow:**
+  - **Find work:** `sql(worker, "SELECT id, case_id, case_revision, role FROM jobs_view WHERE status = 'QUEUED'")`.
+  - **Claim:** `call(worker, "claim_job", job_id, case_id, case_revision)`. The call that returns success **won the lease**; losers get an error such as `… under another lease`.
+  - **Read the lease:** `sql(worker, f"SELECT lease_token FROM jobs_view WHERE id = {job_id}")`.
+  - **Submit:** `call(worker, "complete_job", job_id, case_id, revision, lease_token, "LIVE", proposed_facts, proposed_matches, evidence_ids, unresolved_questions, summary, explanation_evidence_ids)`. Heartbeat with `call(worker, "heartbeat_job", job_id, case_id, revision, lease_token)`.
+- **Argument encoding:**
+  - **Positional:** args are positional lists, in the order they appear in the reducer (see `backend/db/bindings/*_reducer.ts` or `pipeline.ts`).
+  - **Nested objects:** nested objects are positional lists too, e.g. a proposed fact is `[document_id, page_or_row, excerpt, field, value]`. Object form needs `snake_case` keys.
+  - **Options:** optional values are `{"some": x}` or `{"none": []}`.
+  - **Large integers:** `u64` values are JSON numbers.
+  - **Raw bytes:** `store_document` takes `byteLength` and a storage key, not file bytes. Bytes go to the file store.
+- **Errors:** HTTP 200 means success. A rejected reducer returns HTTP 530 with its message (for example `Stale or unknown lease.`), and malformed arguments return 400.
+- **SQL limits (tested):** `WHERE` filters work, but **`ORDER BY` is not supported** (HTTP 400), and `LIMIT` without an ordering returns arbitrary rows. Fetch the rows you need, then sort and slice in Python. Timestamps come back as a one-element list of microseconds since the epoch, e.g. `[1792826121551198]`.
+- **File store:** the file store is a directory (`FILE_STORE_DIR`). A document's bytes are at `<FILE_STORE_DIR>/sha256/<first 2 hex of hash>/<hash>`. Python reads it directly and re-hashes. To write a file, save it at that path and then call `store_document`, following `backend/db/repositories/file_store.ts`.
+- **Still TypeScript:** the code parsing of CSV/JSON at import (`parsers.ts`) and the `finalize_import` argument assembly (`cases.ts`). The Python API must port these, or call the Node tooling, to implement `create-review`. The reducer itself is language-neutral.
 
 ### Database changes
 
@@ -207,13 +243,15 @@ await api.imports.upload(ctx, { filename, mediaType, bytes, type }, dataPlane);
 |---|---|
 | **Agent teammates** | Worker loop; Extraction (Bitdeer: rates, effective dates and signers from contracts and amendments); Matching (Factory: link work to contract, invoices and ledger, and raise rate mismatches as unresolved questions); Investigation (Factory: find the signed amendment and ignore the email-only rate and the injection). Build replayed stubs first, then go live. Agree on fact field names with the calculator owner (`rate.hourlyCents`, `rate.effectiveFrom`, `rate.approvedBy`, …) |
 | **Calculator owner** (critical path) | `build_proposal`: exact cents; posted → adjustment, draft → full entry; closed period → blocked; no double-counted work; an email alone isn't approval; immutable proposal versions with a hash; `VERIFIED_NO_CHANGE`. Trigger it when `isAwaitingProposal()` is true |
-| **Matthew** (control plane) | Next.js routes calling his handlers; `ask_question`, `decide_review` (gateway-only) and export reducers and handlers; decide how reviewer questions get answered (his `AgentRole` has no answer role yet) |
-| **Frontend** | Reviewer UI through the gateway: case list, case page, evidence, ask why, approve or reject, copyable entry table and CSV download. Use the seeded case 1 |
+| **Matthew** (Python API) | Connect the four routes to the database over HTTP (see above); implement the `create-review` import (upload → file store → `store_document` → `finalize_import`) with vendor, period, amount and draft/posted inferred from the accrual document; the reviewer question and approval flow (see the open question below); decide how reviewer questions get answered (there is no answering agent role yet) |
+| **Frontend** | Reviewer UI through the Python API: case list, case page, evidence, ask why, approve or reject, copyable entry table and CSV download. Use the seeded case 1 |
 | **Database (Wayne)** | Bump the case revision when a case document gets a new version (invalidates old jobs and approvals); support the new tables and reducers |
 
 **To confirm as a team:**
-1. **Parsing:** structured CSV/JSON is parsed by code at import, not by the extraction agent. The extraction owner can take over `backend/db/repositories/parsers.ts` if preferred.
-2. **Stage advancement:** `complete_job` advances the stages automatically, and the orchestration owner may want to change that rule.
+1. **Approvals:** the brief (p.1-2) says a human approves, rejects or asks a question on the **reviewer screen**. The Python API README says these flow through **email**. The database enforces approval only through the gateway identity, so either works, but the team should pick one and say so in the docs.
+2. **Agent language:** the agent tools and worker helpers in this repo are TypeScript; the runtime direction is Python. Python agents can use the HTTP calls above, or the tools can be ported.
+3. **Parsing:** structured CSV/JSON is parsed by code at import, not by the extraction agent. The extraction owner can take over `backend/db/repositories/parsers.ts` if preferred.
+4. **Stage advancement:** `complete_job` advances the stages automatically, and the orchestration owner may want to change that rule.
 
 ---
 
@@ -223,16 +261,17 @@ await api.imports.upload(ctx, { filename, mediaType, bytes, type }, dataPlane);
 .env.example                         configuration template
 scripts/db.mjs                       publish / reset / generate / sql wrapper
 docs/                                setup guide, progress log
+compose.yaml                         Docker Compose (API container for now)
 data/files/                          local file store (git-ignored)
 backend/
   db/
     spacetime/spacetimedb/src/       SpacetimeDB module: schema.ts, auth.ts, index.ts (documents), pipeline.ts (cases, mailbox, jobs)
     bindings/                        generated client bindings (never edit)
-    repositories/                    Node API: client, file_store, documents, parsers, cases, mailbox, jobs, data_plane
+    repositories/                    Node API: client, file_store, documents, parsers, cases, mailbox, jobs, contracts
     seed/                            bootstrap.ts, seed.ts, synthetic documents
     test/smoke.ts                    end-to-end smoke test
   agents/                            tools/ (done), implementations/ and prompts/ (next)
-  control_plane/                     request validation + DataPlane port (Matthew)
+  api/                               Python FastAPI review API stubs + Dockerfile (Matthew)
   orchestrator/, data_pipeline/      skeleton
 frontend/                            skeleton (reviewer UI next)
 ```
@@ -256,5 +295,5 @@ frontend/                            skeleton (reviewer UI next)
 - **[docs/SPACETIMEDB_DOCUMENT_STORAGE_SETUP.md](docs/SPACETIMEDB_DOCUMENT_STORAGE_SETUP.md):** full setup, data model, reducers, file formats and troubleshooting.
 - **[docs/SPACETIME_DB_PROGRESS.md](docs/SPACETIME_DB_PROGRESS.md):** what was built, and the decisions made.
 - **[backend/agents/README.md](backend/agents/README.md):** the agent integration guide.
-- **[backend/control_plane/README.md](backend/control_plane/README.md):** control-plane contracts.
+- **[backend/api/README.md](backend/api/README.md):** the Python review API (routes, response contracts, Docker, tests).
 - **[backend/db/spacetime/CLAUDE.md](backend/db/spacetime/CLAUDE.md):** SpacetimeDB TypeScript API reference for coding agents.

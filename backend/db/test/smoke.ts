@@ -1,16 +1,17 @@
-// Local smoke test for document storage, following the brief's process boundaries:
-// gateway-only writes, private tables behind sender-checked views, bytes on the file store.
+// Local smoke test for the data layer, following the brief's process boundaries: gateway-only writes,
+// private tables behind sender-checked views, bytes on the file store, code-parsed import, and the
+// worker job pipeline (leases, scope checks, sweep).
 // Uses a unique reference ID per run, so it can run repeatedly. Requires `npm run db:bootstrap`.
 
 import { randomUUID } from 'node:crypto';
 import { existsSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { connect, connectService, DB_NAME, DB_URI, ownerToken, waitFor } from '../repositories/client';
-import { getCase, isAwaitingProposal, listFacts, listJobs } from '../repositories/cases';
+import { finalizeImport, getCase, isAwaitingProposal, listCases, listFacts, listJobs, startReview } from '../repositories/cases';
+import { claimJob, completeJob, heartbeatJob } from '../repositories/jobs';
+import type { AgentOutput } from '../repositories/contracts';
 import { storeEmail } from '../repositories/mailbox';
 import { createAgentTools } from '../../agents/tools/index';
-import type { AgentOutput, CaseUpdate } from '../../control_plane/contracts.ts';
-import * as workerApi from '../../control_plane/api/worker.ts';
 import {
   addDocumentVersion,
   findByContentHash,
@@ -22,8 +23,6 @@ import {
   verifyDocument,
 } from '../repositories/documents';
 import { FILE_STORE_DIR, putFile, sha256Hex } from '../repositories/file_store';
-import { createSpacetimeDataPlane } from '../repositories/data_plane';
-import * as api from '../../control_plane/api/index.ts';
 
 const results: Array<{ name: string; ok: boolean; detail?: string }> = [];
 async function check(name: string, fn: () => Promise<void> | void) {
@@ -150,30 +149,34 @@ await check('list documents with filters', () => {
   assert(latest.length === 3 && latest.every(d => d.id !== sheetV1Id), 'latestOnly should hide v1');
 });
 
-// --- control plane -> DataPlane adapter -> SpacetimeDB --------------------------------------
-const dataPlane = createSpacetimeDataPlane(conn);
-const workerPlane = createSpacetimeDataPlane(worker.conn);
-const gatewayCtx = { kind: 'gateway' as const, companyId, serviceIdentity: 'smoke', requestId: ref };
-const workerCtx = { kind: 'worker' as const, companyId, serviceIdentity: 'smoke-worker', requestId: ref };
+const ledgerBytes = text(`entry_id,vendor_id,period,kind,amount,status\n${ref},V-TEST,2026-09,ACCRUAL,1.00,POSTED\n`);
 
-await check('control plane settings.get', async () => {
-  const s = await api.settings.get(gatewayCtx, {}, dataPlane);
+await check('repository uploads and reads a ledger', async () => {
+  const doc = await uploadDocument(conn, { ...base, originalFilename: 'ledger.csv', mediaType: 'text/csv', bytes: ledgerBytes, type: 'LEDGER' });
+  assert(doc.contentHash === sha256Hex(ledgerBytes), 'document hash mismatch');
+  const read = readDocument(conn, doc.id);
+  assert(read.document.id === doc.id && read.document.type === 'LEDGER' && read.document.version === 1, 'document summary mismatch');
+  assert(read.document.mediaType === 'text/csv' && Buffer.from(read.bytes).equals(Buffer.from(ledgerBytes)), 'bytes mismatch');
+});
+
+await check('gateway reads configured company settings', () => {
+  const s = [...conn.db.settingsView.iter()][0];
   assert(s.companyId === companyId && s.currency === 'USD' && s.expenseAccount.code === '6100' && s.liabilityAccount.code === '2105', 'settings mismatch');
 });
 
-await check('control plane accepts a 10 MiB upload at its limit', async () => {
+await check('repository accepts a 10 MiB upload at its limit', async () => {
   const big = new Uint8Array(10 * 1024 * 1024).fill(0x41);
   big.set(text(ref));
-  const receipt = await api.imports.upload(gatewayCtx, { filename: 'big.txt', mediaType: 'text/plain', bytes: big, type: 'OTHER' }, dataPlane);
-  assert(getDocument(conn, BigInt(receipt.uploadId))!.byteLength === big.length, 'size mismatch');
+  const doc = await uploadDocument(conn, { ...base, originalFilename: 'big.txt', mediaType: 'text/plain', bytes: big, type: 'OTHER' });
+  assert(getDocument(conn, doc.id)!.byteLength === big.length, 'size mismatch');
 });
 
 // --- cases, import, mailbox, job queue (brief p.3-4) --------------------------------------------
 const vendor = `V-${ref}`;
 const otherVendor = `V-OTHER-${ref}`;
 type UploadType = 'ACCRUAL' | 'CONTRACT' | 'AMENDMENT' | 'TIMESHEET' | 'INVOICE' | 'LEDGER' | 'OTHER';
-const up = async (filename: string, mediaType: string, type: UploadType, body: string) =>
-  (await api.imports.upload(gatewayCtx, { filename, mediaType, bytes: text(body), type }, dataPlane)).uploadId;
+const up = async (originalFilename: string, mediaType: string, type: UploadType, body: string) =>
+  (await uploadDocument(conn, { companyId, sourceLabel: 'smoke test (SYNTHETIC)', originalFilename, mediaType, type, bytes: text(body) })).id;
 
 const ids = {
   contract: await up('msa.txt', 'text/plain', 'CONTRACT', `SYNTHETIC MSA ${ref}\nHourly rate: $100.00 per hour, effective 2026-01-01.\nAuthorized signatory: Dana Whitfield, Controller\n`),
@@ -186,15 +189,16 @@ const ids = {
 };
 const mailAmendment = await storeEmail(conn, {
   companyId, messageKey: `${ref}:m1`, vendorId: vendor, threadId: `${ref}:T1`, sender: 'contracts@vendor.example', recipients: ['ap@northwind-demo.example'],
-  subject: `Signed amendment ${ref}`, sentAt: '2026-08-28T17:05:00Z', body: 'Countersigned amendment attached: new hourly rate effective 2026-09-01.', attachmentDocumentIds: [BigInt(ids.amendment)],
+  subject: `Signed amendment ${ref}`, sentAt: '2026-08-28T17:05:00Z', body: 'Countersigned amendment attached: new hourly rate effective 2026-09-01.', attachmentDocumentIds: [ids.amendment],
 });
 const mailOther = await storeEmail(conn, {
   companyId, messageKey: `${ref}:m2`, vendorId: otherVendor, threadId: `${ref}:T2`, sender: 'ar@other.example', recipients: ['ap@northwind-demo.example'],
-  subject: `Other vendor amendment rate ${ref}`, sentAt: '2026-09-01T10:00:00Z', body: 'amendment hourly rate for a different vendor', attachmentDocumentIds: [BigInt(ids.otherDoc)],
+  subject: `Other vendor amendment rate ${ref}`, sentAt: '2026-09-01T10:00:00Z', body: 'amendment hourly rate for a different vendor', attachmentDocumentIds: [ids.otherDoc],
 });
 const importInput = {
+  companyId,
   idempotencyKey: `${ref}:import`,
-  uploadIds: [ids.contract, ids.timesheet, ids.invoice, ids.ledger, ids.accrual],
+  documentIds: [ids.contract, ids.timesheet, ids.invoice, ids.ledger, ids.accrual],
   vendorId: vendor,
   servicePeriod: { from: '2026-09-01', to: '2026-09-30' },
   postingPeriod: '2026-09',
@@ -202,12 +206,13 @@ const importInput = {
   originalAmountCents: '150000',
   sourceEntryId: `ACR-${ref}`,
 };
-let caseId = '';
+let caseId = 0n;
 const rev = 1;
 const leaseOf = async (role: string) => {
-  const job = await waitFor(() => listJobs(conn, BigInt(caseId)).find(j => j.role === role && j.status === 'QUEUED'), `${role} job`);
-  return workerApi.claim(workerCtx, { caseId, expectedRevision: rev, jobId: String(job.id) }, workerPlane);
+  const job = await waitFor(() => listJobs(conn, caseId).find(j => j.role === role && j.status === 'QUEUED'), `${role} job`);
+  return claimJob(worker.conn, { jobId: job.id, caseId, expectedRevision: rev });
 };
+const refOf = (lease: { id: string; leaseToken: string }) => ({ jobId: BigInt(lease.id), caseId, expectedRevision: rev, leaseToken: lease.leaseToken });
 const output = (o: Partial<AgentOutput> & { summary: string }): AgentOutput => ({
   proposedFacts: o.proposedFacts ?? [],
   proposedMatches: o.proposedMatches ?? [],
@@ -216,12 +221,12 @@ const output = (o: Partial<AgentOutput> & { summary: string }): AgentOutput => (
   explanation: { summary: o.summary, evidenceIds: o.evidenceIds ?? [] },
 });
 
-await check('imports.finalize parses structured files with code into facts and evidence rows', async () => {
-  const c = await api.imports.finalize(gatewayCtx, importInput, dataPlane);
+await check('finalizeImport parses structured files with code into facts and evidence rows', async () => {
+  const c = await finalizeImport(conn, importInput);
   caseId = c.id;
-  assert(c.state === 'IMPORTED' && c.inputRevision === 1 && c.blockers.length === 0, `unexpected case ${JSON.stringify(c)}`);
-  assert(c.servicePeriod.from === '2026-09-01' && c.originalAmountCents === '150000' && c.currentProposalId === null, 'case fields mismatch');
-  await waitFor(() => getCase(worker.conn, BigInt(caseId)), 'case replicated to the worker');
+  assert(c.state === 'IMPORTED' && c.inputRevision === 1 && c.blockers.length === 0, `unexpected case state ${c.state} blockers ${c.blockers}`);
+  assert(c.servicePeriodFrom === '2026-09-01' && c.originalAmountCents === '150000' && c.currentProposalId === undefined, 'case fields mismatch');
+  await waitFor(() => getCase(worker.conn, caseId), 'case replicated to the worker');
   const ev = createAgentTools(worker.conn, { caseId }).getCaseEvidence();
   assert(ev.workItems.length === 2 && ev.workItems.every(w => w.claimedRateCents === '11000'), 'expected 2 approved work items at 11000');
   assert(ev.invoiceLines.length === 1 && ev.invoiceLines[0].amountCents === '70000', 'invoice line mismatch');
@@ -231,43 +236,44 @@ await check('imports.finalize parses structured files with code into facts and e
   assert(ev.facts.some(f => f.field === 'accrual.amountCents' && f.value === '150000'), 'accrual fact missing');
 });
 
-await check('imports.finalize is idempotent and rejects duplicate source entries', async () => {
-  const again = await api.imports.finalize(gatewayCtx, importInput, dataPlane);
+await check('finalizeImport is idempotent and rejects duplicate source entries', async () => {
+  const again = await finalizeImport(conn, importInput);
   assert(again.id === caseId, 'same idempotencyKey created a second case');
-  await rejects(api.imports.finalize(gatewayCtx, { ...importInput, idempotencyKey: `${ref}:import-2` }, dataPlane), /already exists for source entry/);
+  await rejects(finalizeImport(conn, { ...importInput, idempotencyKey: `${ref}:import-2` }), /already exists for source entry/);
 });
 
 await check('missing inputs and duplicate work block the case (WAITING_FOR_INPUT)', async () => {
   const dupSheet = await up('dup.csv', 'text/csv', 'TIMESHEET', `service_date,contractor,approved_minutes,status\n2026-09-01,Dup ${ref},60,APPROVED\n2026-09-01,Dup ${ref},60,APPROVED\n`);
-  const c = await api.imports.finalize(gatewayCtx, { ...importInput, idempotencyKey: `${ref}:blocked`, sourceEntryId: `ACR-${ref}-B`, uploadIds: [dupSheet] }, dataPlane);
+  const c = await finalizeImport(conn, { ...importInput, idempotencyKey: `${ref}:blocked`, sourceEntryId: `ACR-${ref}-B`, documentIds: [dupSheet] });
   assert(c.state === 'WAITING_FOR_INPUT', `state ${c.state}`);
   assert(c.blockers.some(b => b.startsWith('DUPLICATE_WORK')) && c.blockers.filter(b => b.startsWith('MISSING_INPUT')).length === 4, `blockers ${c.blockers}`);
-  await rejects(api.cases.startReview(gatewayCtx, { caseId: c.id, expectedRevision: 1 }, dataPlane), /Case is WAITING_FOR_INPUT/);
+  await rejects(startReview(conn, c.id, 1), /Case is WAITING_FOR_INPUT/);
 });
 
-let updates: AsyncIterator<CaseUpdate> | undefined;
-await check('cases.get / list / startReview / listJobs (+ subscribe relays updates)', async () => {
-  assert((await api.cases.get(gatewayCtx, { caseId }, dataPlane))?.id === caseId, 'cases.get');
-  assert((await api.cases.list(gatewayCtx, { state: 'IMPORTED', limit: 100 }, dataPlane)).items.some(c => c.id === caseId), 'cases.list');
-  updates = (await api.cases.subscribe(gatewayCtx, { caseId }, dataPlane))[Symbol.asyncIterator]();
-  const started = await api.cases.startReview(gatewayCtx, { caseId, expectedRevision: 1 }, dataPlane);
-  assert(started.state === 'EXTRACTING', `state ${started.state}`);
-  await api.cases.startReview(gatewayCtx, { caseId, expectedRevision: 1 }, dataPlane); // idempotent
-  const jobs = (await api.cases.listJobs(gatewayCtx, { caseId }, dataPlane)).items;
-  assert(jobs.length === 1 && jobs[0].role === 'EXTRACTION' && jobs[0].status === 'QUEUED', `jobs ${JSON.stringify(jobs)}`);
-  const kinds = new Set<string>();
-  const it = updates;
-  while (!(kinds.has('CASE_UPDATED') && kinds.has('JOB_UPDATED'))) {
-    const next = await Promise.race([it.next(), new Promise<never>((_, r) => setTimeout(() => r(new Error('no update relayed')), 5000))]);
-    if (next.done) throw new Error('subscription ended');
-    kinds.add(next.value.kind);
+await check('getCase / listCases / startReview / listJobs (+ live view updates)', async () => {
+  assert(getCase(conn, caseId)?.id === caseId, 'getCase');
+  assert(listCases(conn, { state: 'IMPORTED' }).some(c => c.id === caseId), 'listCases');
+  // Views emit onUpdate when a row changes: this is what live updates (get-review?live=true) build on.
+  const seen: string[] = [];
+  const onUpdate = (_ctx: unknown, _old: unknown, row: { id: bigint; state: string }) => { if (row.id === caseId) seen.push(row.state); };
+  conn.db.casesView.onUpdate(onUpdate);
+  try {
+    const started = await startReview(conn, caseId, 1);
+    assert(started.state === 'EXTRACTING', `state ${started.state}`);
+    await startReview(conn, caseId, 1); // idempotent
+    const jobs = listJobs(conn, caseId);
+    assert(jobs.length === 1 && jobs[0].role === 'EXTRACTION' && jobs[0].status === 'QUEUED', `jobs ${jobs.map(j => `${j.role}:${j.status}`)}`);
+    await waitFor(() => seen.includes('EXTRACTING'), 'live case update');
+  } finally {
+    conn.db.casesView.removeOnUpdate(onUpdate);
   }
 });
 
 await check('only the worker can claim; unregistered clients see no cases', async () => {
-  const job = listJobs(conn, BigInt(caseId))[0];
-  await rejects(conn.reducers.claimJob({ jobId: job.id, caseId: BigInt(caseId), expectedRevision: 1 }), /Only the configured worker/);
-  await rejects(workerApi.claim({ ...workerCtx, kind: 'gateway' } as never, { caseId, expectedRevision: 1, jobId: String(job.id) }, workerPlane), /requires a worker context/);
+  const job = listJobs(conn, caseId)[0];
+  const args = { jobId: job.id, caseId, expectedRevision: 1 };
+  await rejects(conn.reducers.claimJob(args), /Only the configured worker/);
+  await rejects(anon.conn.reducers.claimJob(args), /Only the configured worker/);
   assert([...anon.conn.db.casesView.iter()].length === 0 && [...anon.conn.db.jobsView.iter()].length === 0, 'anonymous client sees cases or jobs');
 });
 
@@ -277,19 +283,18 @@ await check('EXTRACTION: claim lease, heartbeat, scope-checked complete -> MATCH
   assert(lease.allowedEvidenceIds.includes(`doc:${ids.contract}`) && lease.allowedEvidenceIds.includes(`email:${mailAmendment.id}`) && lease.allowedEvidenceIds.includes(`doc:${ids.amendment}`), 'scope missing case/mailbox evidence');
   assert(!lease.allowedEvidenceIds.includes(`email:${mailOther.id}`) && !lease.allowedEvidenceIds.includes(`doc:${ids.otherDoc}`), 'scope includes another vendor');
   assert(lease.facts.length > 0 && lease.policyVersion !== '' && typeof lease.outputSchema === 'object', 'lease payload incomplete');
-  await rejects(workerApi.claim(workerCtx, { caseId, expectedRevision: rev, jobId: lease.id }, workerPlane), /under another lease/);
-  const hb = await workerApi.heartbeat(workerCtx, { caseId, expectedRevision: rev, jobId: lease.id, leaseToken: lease.leaseToken }, workerPlane);
+  await rejects(claimJob(worker.conn, { jobId: BigInt(lease.id), caseId, expectedRevision: rev }), /under another lease/);
+  const hb = await heartbeatJob(worker.conn, refOf(lease));
   assert(hb.leaseExpiry >= lease.leaseExpiry, 'heartbeat did not extend');
 
-  const lref = { caseId, expectedRevision: rev, jobId: lease.id, leaseToken: lease.leaseToken, modelRun: 'REPLAYED' as const };
-  const rateFact = { documentId: ids.contract, pageOrRow: 'line 2', excerpt: 'Hourly rate: $100.00 per hour, effective 2026-01-01.', field: 'rate.hourlyCents', value: '10000' };
-  await rejects(workerApi.complete(workerCtx, { ...lref, leaseToken: 'f'.repeat(32), output: output({ summary: 'x' }) }, workerPlane), /Stale or unknown lease/);
-  await rejects(workerApi.complete(workerCtx, { ...lref, output: output({ summary: 'x', evidenceIds: [`email:${mailOther.id}`] }) }, workerPlane), /outside this job's scope/);
-  await rejects(workerApi.complete(workerCtx, { ...lref, output: output({ summary: 'x', proposedFacts: [{ ...rateFact, documentId: ids.otherDoc }] }) }, workerPlane), /outside this case/);
-  const done = await workerApi.complete(workerCtx, { ...lref, output: output({ summary: 'Contract rate extracted', proposedFacts: [rateFact], evidenceIds: [`doc:${ids.contract}`] }) }, workerPlane);
+  const rateFact = { documentId: String(ids.contract), pageOrRow: 'line 2', excerpt: 'Hourly rate: $100.00 per hour, effective 2026-01-01.', field: 'rate.hourlyCents', value: '10000' };
+  await rejects(completeJob(worker.conn, { ...refOf(lease), leaseToken: 'f'.repeat(32) }, 'REPLAYED', output({ summary: 'x' })), /Stale or unknown lease/);
+  await rejects(completeJob(worker.conn, refOf(lease), 'REPLAYED', output({ summary: 'x', evidenceIds: [`email:${mailOther.id}`] })), /outside this job's scope/);
+  await rejects(completeJob(worker.conn, refOf(lease), 'REPLAYED', output({ summary: 'x', proposedFacts: [{ ...rateFact, documentId: String(ids.otherDoc) }] })), /outside this case/);
+  const done = await completeJob(worker.conn, refOf(lease), 'REPLAYED', output({ summary: 'Contract rate extracted', proposedFacts: [rateFact], evidenceIds: [`doc:${ids.contract}`] }));
   assert(done.status === 'SUCCEEDED', `status ${done.status}`);
-  await waitFor(() => getCase(conn, BigInt(caseId))?.state === 'MATCHING', 'MATCHING state');
-  const f = listFacts(conn, BigInt(caseId)).find(x => x.field === 'rate.hourlyCents');
+  await waitFor(() => getCase(conn, caseId)?.state === 'MATCHING', 'MATCHING state');
+  const f = listFacts(conn, caseId).find(x => x.field === 'rate.hourlyCents');
   assert(f && f.validationStatus === 'PROPOSED' && f.source === 'AGENT' && f.modelRun === 'REPLAYED', 'agent fact not stored as PROPOSED');
 });
 
@@ -299,86 +304,67 @@ await check('MATCHING: proposed matches saved; unresolved question -> INVESTIGAT
   const ledgerId = ev.ledgerRecords[0].id;
   const matches = ev.workItems.map(w => ({
     workItemId: w.id,
-    contractId: ids.contract,
+    contractId: String(ids.contract),
     invoiceLineIds: w.serviceDate === '2026-09-01' ? [ev.invoiceLines[0].id] : [],
     ledgerEntryIds: [ledgerId],
     evidenceIds: [`fact:${w.factId}`],
   }));
-  const lref = { caseId, expectedRevision: rev, jobId: lease.id, leaseToken: lease.leaseToken, modelRun: 'REPLAYED' as const };
-  await rejects(workerApi.complete(workerCtx, { ...lref, output: output({ summary: 'x', proposedMatches: [{ ...matches[0], workItemId: '999999' }] }) }, workerPlane), /not in this case revision/);
-  await workerApi.complete(workerCtx, { ...lref, output: output({ summary: 'Matched 2 work days', proposedMatches: matches, unresolvedQuestions: ['Timesheet bills $110/h but the contract says $100/h. Is there an approved amendment?'] }) }, workerPlane);
-  await waitFor(() => getCase(conn, BigInt(caseId))?.state === 'INVESTIGATING', 'INVESTIGATING state');
+  await rejects(completeJob(worker.conn, refOf(lease), 'REPLAYED', output({ summary: 'x', proposedMatches: [{ ...matches[0], workItemId: '999999' }] })), /not in this case revision/);
+  await completeJob(worker.conn, refOf(lease), 'REPLAYED', output({ summary: 'Matched 2 work days', proposedMatches: matches, unresolvedQuestions: ['Timesheet bills $110/h but the contract says $100/h. Is there an approved amendment?'] }));
+  await waitFor(() => getCase(conn, caseId)?.state === 'INVESTIGATING', 'INVESTIGATING state');
   const allocations = createAgentTools(worker.conn, { caseId }).getCaseEvidence().allocations;
-  assert(allocations.length === 2 && allocations.every(a => a.contractId === ids.contract), 'allocations not stored');
+  assert(allocations.length === 2 && allocations.every(a => a.contractId === String(ids.contract)), 'allocations not stored');
 });
 
 await check('agent tools: vendor-scoped search, thread, attachment text', async () => {
   const tools = createAgentTools(worker.conn, { caseId });
   const hits = tools.searchEmails({ query: 'amendment hourly rate' });
-  assert(hits.length === 1 && hits[0].emailId === String(mailAmendment.id) && hits[0].attachmentDocumentIds[0] === ids.amendment, `hits ${JSON.stringify(hits)}`);
+  assert(hits.length === 1 && hits[0].emailId === String(mailAmendment.id) && hits[0].attachmentDocumentIds[0] === String(ids.amendment), `hits ${JSON.stringify(hits)}`);
   assert(hits[0].snippet.length <= 242, 'snippet not bounded');
   await rejects(() => tools.searchEmails({ vendor: otherVendor, query: 'rate' }), /outside this job's scope/);
   assert(tools.readEmailThread(`${ref}:T1`)[0].body.includes('Countersigned'), 'thread body');
   await rejects(() => tools.readEmailThread(`${ref}:T2`), /outside this job's scope/);
-  const att = await tools.readAttachment(ids.amendment);
+  const att = await tools.readAttachment(String(ids.amendment));
   assert(att.type === 'AMENDMENT' && att.text.includes('$110.00 per hour'), 'attachment text');
-  await rejects(tools.readAttachment(ids.otherDoc), /outside this job's scope/);
+  await rejects(tools.readAttachment(String(ids.otherDoc)), /outside this job's scope/);
 });
 
 await check('INVESTIGATION: amendment evidence submitted -> awaiting build_proposal', async () => {
   const lease = await leaseOf('INVESTIGATION');
-  const lref = { caseId, expectedRevision: rev, jobId: lease.id, leaseToken: lease.leaseToken, modelRun: 'LIVE' as const };
   const ev = [`email:${mailAmendment.id}`, `doc:${ids.amendment}`];
-  await workerApi.complete(workerCtx, { ...lref, output: output({
+  await completeJob(worker.conn, refOf(lease), 'LIVE', output({
     summary: 'Signed Amendment No. 1 sets $110/h from 2026-09-01',
     evidenceIds: ev,
-    proposedFacts: [{ documentId: ids.amendment, pageOrRow: 'line 2', excerpt: 'The hourly rate changes from $100.00 to $110.00 per hour effective 2026-09-01.', field: 'rate.hourlyCents', value: '11000' }],
-  }) }, workerPlane);
-  await waitFor(() => isAwaitingProposal(conn, BigInt(caseId)), 'awaiting proposal');
-  const c = getCase(conn, BigInt(caseId))!;
+    proposedFacts: [{ documentId: String(ids.amendment), pageOrRow: 'line 2', excerpt: 'The hourly rate changes from $100.00 to $110.00 per hour effective 2026-09-01.', field: 'rate.hourlyCents', value: '11000' }],
+  }));
+  await waitFor(() => isAwaitingProposal(conn, caseId), 'awaiting proposal');
+  const c = getCase(conn, caseId)!;
   assert(c.state === 'INVESTIGATING' && c.blockers.length === 0, `state ${c.state}`);
-  const jobs = (await api.cases.listJobs(gatewayCtx, { caseId }, dataPlane)).items;
-  assert(jobs.map(j => `${j.role}:${j.status}`).join(',') === 'EXTRACTION:SUCCEEDED,MATCHING:SUCCEEDED,INVESTIGATION:SUCCEEDED', `jobs ${JSON.stringify(jobs)}`);
-});
-
-await check('evidence.list paginates; evidence.readDocument enforces case scope', async () => {
-  const first = await api.evidence.list(gatewayCtx, { caseId, limit: 3 }, dataPlane);
-  assert(first.items.length === 3 && first.nextCursor !== null, 'first page');
-  const second = await api.evidence.list(gatewayCtx, { caseId, cursor: first.nextCursor!, limit: 100 }, dataPlane);
-  assert(second.items.length > 0 && BigInt(second.items[0].id) > BigInt(first.items[2].id) && second.nextCursor === null, 'second page');
-  const read = await api.evidence.readDocument(gatewayCtx, { caseId, documentId: ids.amendment }, dataPlane); // vendor attachment
-  assert(read.document.type === 'AMENDMENT' && new TextDecoder().decode(read.bytes).includes('$110.00'), 'attachment read');
-  await rejects(api.evidence.readDocument(gatewayCtx, { caseId, documentId: ids.otherDoc }, dataPlane), /not found/);
-  await rejects(api.evidence.readDocument({ ...gatewayCtx, companyId: 'other-co' }, { caseId, documentId: ids.contract }, dataPlane), /Unknown company/);
+  const jobs = listJobs(conn, caseId).map(j => `${j.role}:${j.status}`).join(',');
+  assert(jobs === 'EXTRACTION:SUCCEEDED,MATCHING:SUCCEEDED,INVESTIGATION:SUCCEEDED', `jobs ${jobs}`);
 });
 
 await check('expired lease: sweep requeues, stale completion rejected, retries exhausted -> RETRYABLE_ERROR', async () => {
   const owner = await connect(ownerToken());
   try {
     await owner.conn.reducers.configureJobPolicy({ leaseSeconds: 1, maxAttempts: 2 });
-    const c = await api.imports.finalize(gatewayCtx, { ...importInput, idempotencyKey: `${ref}:lease`, sourceEntryId: `ACR-${ref}-L` }, dataPlane);
-    await api.cases.startReview(gatewayCtx, { caseId: c.id, expectedRevision: 1 }, dataPlane);
-    const job = await waitFor(() => listJobs(conn, BigInt(c.id))[0], 'job');
-    const first = await workerApi.claim(workerCtx, { caseId: c.id, expectedRevision: 1, jobId: String(job.id) }, workerPlane);
-    const requeued = await waitFor(() => listJobs(conn, BigInt(c.id)).find(j => j.status === 'QUEUED' && j.attempts === 1), 'sweep requeue', 10000);
+    const c = await finalizeImport(conn, { ...importInput, idempotencyKey: `${ref}:lease`, sourceEntryId: `ACR-${ref}-L` });
+    await startReview(conn, c.id, 1);
+    const job = await waitFor(() => listJobs(conn, c.id)[0], 'job');
+    const ref1 = { jobId: job.id, caseId: c.id, expectedRevision: 1 };
+    const first = await claimJob(worker.conn, ref1);
+    const requeued = await waitFor(() => listJobs(conn, c.id).find(j => j.status === 'QUEUED' && j.attempts === 1), 'sweep requeue', 10000);
     assert(requeued.lastError === 'Lease expired', 'requeue reason');
-    await rejects(workerApi.complete(workerCtx, { caseId: c.id, expectedRevision: 1, jobId: first.id, leaseToken: first.leaseToken, modelRun: 'REPLAYED', output: output({ summary: 'late' }) }, workerPlane), /Stale or unknown lease/);
-    await workerApi.claim(workerCtx, { caseId: c.id, expectedRevision: 1, jobId: String(job.id) }, workerPlane);
-    await waitFor(() => listJobs(conn, BigInt(c.id)).find(j => j.status === 'FAILED'), 'job failed after max attempts', 10000);
-    const failed = await waitFor(() => (getCase(conn, BigInt(c.id))?.state === 'RETRYABLE_ERROR' ? getCase(conn, BigInt(c.id)) : undefined), 'RETRYABLE_ERROR');
+    await rejects(completeJob(worker.conn, { ...ref1, leaseToken: first.leaseToken }, 'REPLAYED', output({ summary: 'late' })), /Stale or unknown lease/);
+    await claimJob(worker.conn, ref1);
+    await waitFor(() => listJobs(conn, c.id).find(j => j.status === 'FAILED'), 'job failed after max attempts', 10000);
+    const failed = await waitFor(() => (getCase(conn, c.id)?.state === 'RETRYABLE_ERROR' ? getCase(conn, c.id) : undefined), 'RETRYABLE_ERROR');
     assert(failed.blockers.some(b => b.startsWith('JOB_FAILED')), 'failure not surfaced on case');
   } finally {
     await owner.conn.reducers.configureJobPolicy({ leaseSeconds: 30, maxAttempts: 3 });
     owner.conn.disconnect();
   }
 });
-
-await check('operations not built yet report DATA_PLANE_UNAVAILABLE', async () => {
-  await rejects(api.proposals.get(gatewayCtx, { caseId, proposalId: '1' }, dataPlane), /No data-plane adapter is connected for proposals.get/);
-  await rejects(api.reviews.list(gatewayCtx, { caseId }, dataPlane), /No data-plane adapter is connected for reviews.list/);
-});
-
-await updates?.return?.();
 
 for (const c of [gateway, worker, anon]) c.conn.disconnect();
 for (const r of results) console.log(`${r.ok ? 'PASS' : 'FAIL'}  ${r.name}${r.detail ? `\n      ${r.detail}` : ''}`);

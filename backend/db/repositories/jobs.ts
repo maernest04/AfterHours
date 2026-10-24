@@ -1,8 +1,8 @@
 // Worker side of the job queue (brief p.4 claim_job / heartbeat_job / complete_job).
-// Use with connectService('worker'). Shapes follow JobLease / AgentOutput in
-// backend/control_plane/contracts.ts. Model calls happen in the worker, never in reducers.
+// Use with connectService('worker'). Shapes follow JobLease / AgentOutput in ./contracts.ts.
+// Model calls happen in the worker, never in reducers.
 
-import type { AgentOutput, JobLease } from '../../control_plane/contracts.ts';
+import type { AgentOutput, JobLease } from './contracts';
 import type { DbConnection } from '../bindings/index';
 import { waitFor } from './client';
 import { caseDocumentIds, getCase, listFacts, toEvidenceFact, toJobSummary, type JobRow } from './cases';

@@ -1,7 +1,7 @@
 # SpacetimeDB setup and handoff
 
 **Audience:** teammates and coding agents setting this up on another machine, or building on it.
-**Source of truth:** `Accrual_Correction_Brief` (revised: SpacetimeDB edition), cited as "brief p.N", plus the control-plane contracts in `backend/control_plane/` (Matthew's code, unchanged by this layer).
+**Source of truth:** `Accrual_Correction_Brief` (revised: SpacetimeDB edition), cited as "brief p.N", plus the Python review API in `backend/api/` (Matthew's code; its routes are stubs until they are connected to this database).
 **What exists:** the data layer the agents plug into:
 - document storage
 - cases and import
@@ -10,9 +10,9 @@
 - the job queue with leases
 - the read-only agent tools
 
-**Building agents?** Read [`backend/agents/README.md`](../backend/agents/README.md) after §0.
+**Building agents?** Read [`backend/agents/README.md`](../backend/agents/README.md) after §0. **Writing Python (the API or agents)?** Read §10.
 
-> **Not built yet (later phases):** agent implementations and prompts, the worker loop, model providers, the calculator, `build_proposal`, questions, exceptions, reviews and approvals, exports and CSV, and the reviewer UI. The control-plane operations for those return `DATA_PLANE_UNAVAILABLE`. All data is synthetic, and no API keys are needed.
+> **Not built yet (later phases):** agent implementations and prompts, the worker loop, model providers, the calculator, `build_proposal`, questions, exceptions, reviews and approvals, exports and CSV, and the reviewer UI. The Python API routes for them return 501 until connected. All data is synthetic, and no API keys are needed.
 
 ---
 
@@ -38,11 +38,11 @@ npm run db:generate       # regenerate TypeScript bindings
 npm run typecheck
 npm run db:bootstrap      # owner: company, job policy + sweep, gateway/worker identities (safe to re-run)
 npm run db:seed           # demo Acme case + mock mailbox; leaves an EXTRACTION job QUEUED (safe to re-run)
-npm run smoke             # expect: 24/24 checks passed
+npm run smoke             # expect: 23/23 checks passed
 ```
 
 **Done when:**
-- `npm run smoke` ends with `24/24 checks passed`.
+- `npm run smoke` ends with `23/23 checks passed`.
 - The seed's last line reads `case 1 ACR-2026-09-ACME POSTED $7000 state EXTRACTING jobs [EXTRACTION:QUEUED]`.
 
 **After pulling schema changes:** run `npm run db:reset`, `npm run db:generate`, `npm run db:bootstrap`, then `npm run db:seed`.
@@ -51,32 +51,34 @@ npm run smoke             # expect: 24/24 checks passed
 
 ## 1. Architecture (brief p.2-4)
 
+The application direction is **Python services in local Docker containers**. The brief quotes below describe the original Node/Next.js design; the database module and the storage tooling in `backend/db` remain TypeScript. Python reaches the database over HTTP (§10).
+
 ```text
-Browser ──► Next.js server gateway (control plane) ──► SpacetimeDB (private tables, reducers check caller)
+Browser ──► Python API (backend/api) ──────────────► SpacetimeDB (private tables, reducers check caller)
                  │  server-held GATEWAY identity              ▲   public views filter by ctx.sender
                  └─► file store (persistent volume)           │   scheduled sweep requeues expired leases
-Node worker(s) (WORKER identity) ── claim_job / complete_job ─┘   + read views + file store
+Python worker(s) (WORKER identity) ─ claim_job / complete_job ┘   + read views + file store
    └─ Bitdeer / Factory model calls happen here, never in reducers
 ```
 
 | Brief requirement | Implementation |
 |---|---|
-| Browser → Next.js gateway using a server-held identity; worker has a separate identity | `GATEWAY` and `WORKER` service identities, registered by the owner (`db:bootstrap`). Tokens live in `backend/.secrets/` |
+| Browser → server gateway using a server-held identity (the Python API); worker has a separate identity | `GATEWAY` and `WORKER` service identities, registered by the owner (`db:bootstrap`). Tokens live in `backend/.secrets/` |
 | Tables stay private; public views check `ctx.sender` | All 17 tables are private. 14 `*_view`s return rows only to registered identities |
 | Reducers check the caller and validate atomically | Each reducer starts with an owner, gateway, worker or scheduler check, then a company check |
 | Files on a persistent server volume, referenced by storageKey + hash | Content-addressed store (`data/files/`, `storageKey = sha256/<hash>`). Every read is re-hashed |
-| Import: save originals, extract facts with page/row references, check for duplicates | Gateway uploads, then `finalize_import`. Structured files are parsed **with code** into facts plus typed rows. Duplicate documents and duplicate work are flagged |
+| Import: save originals, extract facts with page/row references, check for duplicates | Gateway uploads, then `finalize_import`. Structured files are parsed **with code** into facts plus typed rows. Duplicate work and missing inputs become case blockers; a duplicate document is rejected |
 | Jobs: stable key (case + revision + role), bounded retries, expiring leases, scheduled sweep, atomic `claim_job` | `jobs.job_key`, `job_policy` (30s, 3 attempts), and a `sweep_expired_leases` run every 2s |
 | Agent tools are read-only and scoped to the job | `backend/agents/tools`: `searchEmails`, `readEmailThread`, `readAttachment` and `getCaseEvidence`. Scope is enforced in code and again in `complete_job` |
 | Agents cannot approve, export, modify policy or write accounting entries | The worker identity can only call `claim_job`, `heartbeat_job` and `complete_job`. Its facts and matches are stored as `PROPOSED` |
-| Every record belongs to the fixed demo company | `settings.company_id` (default `demo`). Every reducer and the adapter reject any other company |
+| Every record belongs to the fixed demo company | `settings.company_id` (default `demo`). Every company-scoped reducer rejects any other company |
 
 ## 2. Prerequisites (one-time per machine)
 
 | Tool | Version | Check |
 |---|---|---|
 | Git | any | `git --version` |
-| Node.js | **22.x** (22.18+ recommended, see §11) | `node --version` |
+| Node.js | **22.x** | `node --version` |
 | SpacetimeDB CLI | **2.13.x**, matching the `spacetimedb` npm package | `spacetime --version` |
 
 - **Install the CLI:**
@@ -105,7 +107,7 @@ To override any of these, run `Copy-Item .env.example .env`. npm scripts load `.
 |---|---|---|
 | `SPACETIMEDB_URI` | `http://localhost:3000` | SpacetimeDB server |
 | `SPACETIMEDB_DATABASE` | `accrual-docs` | Database name. Lowercase letters, digits and dashes; **no underscores** |
-| `COMPANY_ID` | `demo` | Fixed demo company. Must match the control plane's `context.companyId` |
+| `COMPANY_ID` | `demo` | Fixed demo company. Must match the company configured for backend services |
 | `FILE_STORE_DIR` | `<repo>/data/files` | Persistent volume for original files. The gateway and worker must share it |
 | `SPACETIMEDB_SECRETS_DIR` | `<repo>/backend/.secrets` | Gateway and worker identity tokens |
 | `JOB_LEASE_SECONDS` / `JOB_MAX_ATTEMPTS` | `30` / `3` | Job policy, applied by `db:bootstrap` |
@@ -132,19 +134,17 @@ To override any of these, run `Copy-Item .env.example .env`. npm scripts load `.
   - another vendor's email, to check search scope
 - **Import and start:** the case is imported and review started, so **case 1 is in `EXTRACTING` with an `EXTRACTION` job `QUEUED`**, ready for an agent worker.
 
-**`npm run smoke`** runs 24 checks against a fresh `SMOKE-xxxxxxxx` scope each time, so it can be repeated. Matthew's API handlers are called through the adapter. It covers:
+**`npm run smoke`** runs 23 checks against a fresh `SMOKE-xxxxxxxx` scope each time, so it can be repeated. It calls the Node repositories directly. It covers:
 - **Document storage and access:** the file store, hash verification, tamper detection, metadata validation, gateway-only writes, view visibility, idempotency and versioning.
 - **Import:** code-parsed facts with row references; unapproved timesheet rows become `REJECTED` facts; idempotent finalize; duplicate source entries rejected; missing inputs or duplicate work produce `WAITING_FOR_INPUT`.
-- **Case operations:** `cases.get`, `list`, `startReview`, `listJobs` and `subscribe` (live updates).
+- **Case operations:** `getCase`, `listCases`, `startReview`, `listJobs`, and live updates (views emit `onUpdate` when a case changes).
 - **The full job pipeline:**
   - **EXTRACTION:** claim, heartbeat, and a scope-checked complete, which queues MATCHING.
   - **MATCHING:** a complete with an unresolved question, which queues INVESTIGATION.
   - **INVESTIGATION:** a complete, after which the case is awaiting `build_proposal`.
   - **Rejections:** a stale or forged lease, out-of-scope evidence, and wrong-case IDs are all rejected.
 - **Agent tools:** vendor-scoped search, threads, attachment text, and scope errors.
-- **Evidence:** `evidence.list` paging and `evidence.readDocument` scope.
 - **Lease expiry:** the sweep requeues an expired job; a late completion is rejected; retries exhausted produce `RETRYABLE_ERROR`.
-- **Unbuilt operations** report `DATA_PLANE_UNAVAILABLE`.
 
 ## 7. Data model
 
@@ -200,7 +200,7 @@ Lease expired → sweep requeues; attempts exhausted → job FAILED, case RETRYA
 - **Evidence references** are prefixed strings: `doc:<documents.id>`, `fact:<facts.id>` and `email:<emails.id>`. All other IDs are plain decimal strings.
 - **Allowed evidence for a job:** the case's documents, plus the vendor's mailbox emails and attachments, plus the current revision's facts.
 
-## 9. Reducers and the control-plane adapter
+## 9. Reducers
 
 | Reducer | Caller | Purpose |
 |---|---|---|
@@ -211,17 +211,64 @@ Lease expired → sweep requeues; attempts exhausted → job FAILED, case RETRYA
 | `claim_job`, `heartbeat_job`, `complete_job` | worker | Lease a job, keep it alive, submit `AgentOutput` |
 | `sweep_expired_leases` | scheduler only | Every 2s: requeue expired leases, fail exhausted jobs |
 
-**`createSpacetimeDataPlane(conn)`** (`backend/db/repositories/data_plane.ts`) implements Matthew's `DataPlane` port:
+The Python API (`backend/api`) calls these reducers and reads the views directly, as the gateway identity; see §10. The payload shapes for jobs, leases and agent output are in `backend/db/repositories/contracts.ts`.
 
-| Operation | Status |
+## 10. Using the database from Python
+
+Python needs no client library: SpacetimeDB speaks HTTP. **Verified against this database:** reading views, calling reducers, a worker claiming a job and completing it with nested results (the case advanced to `MATCHING`), optional arguments, and rejection messages. The helper below is stdlib-only and was run as written.
+
+```python
+import json, urllib.request, urllib.error
+
+DB = "http://localhost:3000/v1/database/accrual-docs"       # SPACETIMEDB_URI + SPACETIMEDB_DATABASE
+
+def _req(path, token, body, content_type):
+    req = urllib.request.Request(f"{DB}{path}", data=body, method="POST",
+                                 headers={"Authorization": f"Bearer {token}", "Content-Type": content_type})
+    try:
+        with urllib.request.urlopen(req) as r:
+            return r.read()
+    except urllib.error.HTTPError as e:                      # a rejected reducer puts its message in the body
+        raise RuntimeError(e.read().decode()) from None
+
+def sql(token, query):
+    """Query the views your identity may see. Returns a list of dicts."""
+    result = json.loads(_req("/sql", token, query.encode(), "text/plain"))[0]
+    cols = [c["name"]["some"] for c in result["schema"]["elements"]]
+    return [dict(zip(cols, row)) for row in result["rows"]]
+
+def call(token, reducer, *args):
+    """Call a reducer. Arguments are positional, in the reducer's declared order."""
+    _req(f"/call/{reducer}", token, json.dumps(list(args)).encode(), "application/json")
+```
+
+- **Tokens:** `backend/.secrets/gateway.token` (the API) and `backend/.secrets/worker.token` (agents), created by `npm run db:bootstrap`. Services use their own identity; **never use the owner token**. Tables are private, so use the `*_view` names (`SELECT … FROM jobs_view`).
+- **Worker flow:**
+  - **Find work:** `sql(worker, "SELECT id, case_id, case_revision, role FROM jobs_view WHERE status = 'QUEUED'")`.
+  - **Claim:** `call(worker, "claim_job", job_id, case_id, case_revision)`. The call that returns success **won the lease**; losers get an error such as `… under another lease`.
+  - **Read the lease:** `sql(worker, f"SELECT lease_token FROM jobs_view WHERE id = {job_id}")`.
+  - **Submit:** `call(worker, "complete_job", job_id, case_id, revision, lease_token, "LIVE", proposed_facts, proposed_matches, evidence_ids, unresolved_questions, summary, explanation_evidence_ids)`. Heartbeat with `call(worker, "heartbeat_job", job_id, case_id, revision, lease_token)`.
+- **Argument encoding:**
+  - **Positional:** args are positional lists, in the order they appear in the reducer (see `backend/db/bindings/*_reducer.ts` or `pipeline.ts`).
+  - **Nested objects:** nested objects are positional lists too, e.g. a proposed fact is `[document_id, page_or_row, excerpt, field, value]`. Object form needs `snake_case` keys.
+  - **Options:** optional values are `{"some": x}` or `{"none": []}`.
+  - **Large integers:** `u64` values are JSON numbers.
+  - **Raw bytes:** `store_document` takes `byteLength` and a storage key, not file bytes. Bytes go to the file store.
+- **Errors:** HTTP 200 means success. A rejected reducer returns HTTP 530 with its message (for example `Stale or unknown lease.`), and malformed arguments return 400.
+- **SQL limits (tested):** `WHERE` filters work, but **`ORDER BY` is not supported** (HTTP 400), and `LIMIT` without an ordering returns arbitrary rows. Fetch the rows you need, then sort and slice in Python. Timestamps come back as a one-element list of microseconds since the epoch, e.g. `[1792826121551198]`.
+- **File store:** the file store is a directory (`FILE_STORE_DIR`). A document's bytes are at `<FILE_STORE_DIR>/sha256/<first 2 hex of hash>/<hash>`. Python reads it directly and re-hashes. To write a file, save it at that path and then call `store_document`, following `backend/db/repositories/file_store.ts`.
+- **Still TypeScript:** the code parsing of CSV/JSON at import (`parsers.ts`) and the `finalize_import` argument assembly (`cases.ts`). The Python API must port these, or call the Node tooling, to implement `create-review`. The reducer itself is language-neutral.
+
+### Mapping the four API routes onto the database (suggested; Matthew to confirm)
+
+| Route | Database side |
 |---|---|
-| `imports.upload`, `imports.finalize` | Done |
-| `cases.list`, `cases.get`, `cases.startReview`, `cases.listJobs`, `cases.subscribe` | Done |
-| `worker.claim`, `worker.heartbeat`, `worker.complete` | Done. These require a `worker` context and a worker connection |
-| `evidence.list`, `evidence.readDocument`, `settings.get` | Done |
-| `questions.*`, `exceptions.resolve`, `proposals.*`, `reviews.*`, `exports.*`, `settings.configure` | `DATA_PLANE_UNAVAILABLE`; later phase |
+| `POST /create-review` | For each file: write the bytes to the file store, then `store_document` (gateway). Derive the case fields from the uploaded accrual document, whose parsed `accrual.*` facts hold `entryId` (→ `sourceEntryId`), `vendorId`, `status` (→ `originalStatus`), `amountCents`, `postingPeriod` and `servicePeriod`; ask for clarification if the status is unclear. Then `finalize_import` and `start_review`. The generated `idempotency_key` is the `finalize_import` key. A natural `review_id` is the case id |
+| `GET /list-review` | `SELECT id, state, created_at, updated_at FROM cases_view WHERE id > <cursor>`, then sort by id and take `limit` rows in Python (there is no `ORDER BY`). The cursor is the last id returned, `next_cursor` is `null` when no rows remain, and the API's `status` is the case `state` |
+| `GET /get-review` | `cases_view` (amounts, `blockers`, `input_revision`), `facts_view` (evidence: `document_id`, `page_or_row`, `excerpt`), and `jobs_view` plus `job_results_view` (history and summaries). Proposal fields stay `null` until `build_proposal` exists. SpacetimeDB's HTTP API has no subscription, so `live=true` polls these views and emits an event when the case's `updated_at` changes |
+| `GET /export-review` | Not available yet: needs `build_proposal`, an approval reducer and an export reducer |
 
-## 10. Repository layout
+## 11. Repository layout
 
 ```text
 scripts/db.mjs                                    publish / reset / generate / sql wrapper
@@ -235,14 +282,14 @@ backend/db/repositories/
   client.ts                                       connect / connectService('gateway'|'worker') / ownerToken / waitFor
   file_store.ts  documents.ts                     file store + document API
   parsers.ts  cases.ts  mailbox.ts  jobs.ts        import parsing, cases, mailbox, worker job API
-  data_plane.ts                                   DataPlane adapter for backend/control_plane
+  contracts.ts                                    job / lease / AgentOutput payload types
 backend/agents/tools/index.ts                     read-only agent tools + AGENT_TOOL_SPECS
 backend/db/seed/bootstrap.ts  seed.ts  documents/ owner setup, demo seed, synthetic files
 backend/db/test/smoke.ts                          24-check smoke test
-backend/control_plane/                            Matthew's validation + DataPlane port (unchanged)
+backend/api/                                      Python FastAPI review API stubs + Dockerfile (Matthew)
 ```
 
-## 11. Troubleshooting
+## 12. Troubleshooting
 
 | Symptom | Fix |
 |---|---|
@@ -254,11 +301,10 @@ backend/control_plane/                            Matthew's validation + DataPla
 | Breaking-change error on publish | `npm run db:reset`, then `db:generate`, `db:bootstrap`, `db:seed` |
 | TypeScript errors about reducers or views | `npm run db:generate` |
 | A job stuck in RUNNING | The worker died; the sweep requeues it once its lease expires (30s by default) |
-| `backend/control_plane` tests fail on Node < 22.18 | `node --experimental-strip-types --test control_plane.test.mjs` |
 | `npm` is blocked by the execution policy | `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`, or use `npm.cmd` |
 | Server-side errors | `spacetime logs accrual-docs --server local -n 50`. `ERROR` lines after a smoke run are expected: they come from its deliberate rejection checks |
 
-## 12. Extending (later phases)
+## 13. Extending (later phases)
 
 - **Follow the brief's backend contract (p.4).** Still to build: `build_proposal`, `ask_question`/`resolve_exception`, `decide_review` (gateway-only; the worker can never approve) and `authorize_export`/`finalize_export` (the CSV goes on the file store).
 - **Every new reducer** starts with a caller check and a company check (`auth.ts`). Every new table stays private behind a view filtered by `ctx.sender`.
@@ -266,5 +312,5 @@ backend/control_plane/                            Matthew's validation + DataPla
   - `ACCEPTED` CODE facts, the typed evidence rows and `job_results`, for the current revision
   - agent facts and allocations, which are `PROPOSED`, so the calculator or a validation step decides what to accept
 - **Changed inputs** (a new document version for a case) should bump `cases.input_revision`. Stale jobs are rejected automatically, because every worker call carries `expectedRevision`.
-- **Don't edit `backend/control_plane/`.** Add handlers in `data_plane.ts`, and add a smoke check for each one.
+- **Python API:** connect each route to reducers and views over HTTP (§10), and add a smoke or API test for each one.
 - **After a module change,** run `db:publish` (or `db:reset` followed by `db:bootstrap`), then `db:generate`, `typecheck` and `smoke`, and commit the bindings.

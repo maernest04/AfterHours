@@ -1,6 +1,6 @@
 # Agents
 
-This folder is for the three AI roles in the brief (p.2), which run in a separate Node worker:
+This folder is for the three AI roles in the brief (p.2), which run in a separate worker process (Python, per the team direction; the reference code here is TypeScript):
 
 | Role | Provider | Job |
 |---|---|---|
@@ -45,11 +45,11 @@ for (const job of listClaimableJobs(conn, ['EXTRACTION'])) {   // QUEUED jobs fr
 }
 ```
 
-Through the control plane, the equivalent calls are `worker.claim`, `worker.heartbeat` and `worker.complete` in `backend/control_plane/api/worker.ts`, with `createSpacetimeDataPlane(workerConn)` and a `{ kind: 'worker', ... }` context.
+**Writing the worker in Python?** The team's runtime direction is Python. The loop above is a TypeScript reference. Python does the same over plain HTTP: `claim_job`, `heartbeat_job` and `complete_job` with the worker token, reading jobs and evidence from the `*_view` tables. This is verified, with a stdlib-only helper and the argument encoding, in [docs/SPACETIMEDB_DOCUMENT_STORAGE_SETUP.md](../../docs/SPACETIMEDB_DOCUMENT_STORAGE_SETUP.md) §10. The four read-only tools below are TypeScript today; a Python agent needs equivalents (they are short: view queries plus reading `data/files`).
 
 ## Contract (enforced by `complete_job`)
 
-- **Output shape** is `AgentOutput` from `backend/control_plane/contracts.ts`, also given as `lease.outputSchema`.
+- **Output shape** is `AgentOutput` from `backend/db/repositories/contracts.ts`, also given as `lease.outputSchema`.
 - **IDs:** all IDs are decimal strings. Evidence references are `doc:N`, `fact:N` or `email:N`.
 - **Scope:** every evidence ID must be in `lease.allowedEvidenceIds`: the case's documents, the vendor's emails and attachments, and the current facts. `proposedFacts[].documentId` must be a case document or a vendor attachment.
 - **Matches** (MATCHING jobs only) must reference this case's current work items, invoice lines and ledger records. `contractId` is the `documents.id` of a contract or amendment.

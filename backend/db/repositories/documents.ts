@@ -1,4 +1,4 @@
-// Document-storage repository: the API the gateway (control plane) and worker use.
+// Document-storage repository: the API the gateway (API server) and worker use.
 // Writes: bytes to the file store, then metadata through gateway-only reducers.
 // Reads: the `documents_view` replica (visible only to configured service identities) + file store.
 
@@ -7,7 +7,7 @@ import type { DbConnection } from '../bindings/index';
 import { waitFor } from './client';
 import { getFile, putFile } from './file_store';
 
-// Matches DocumentType and parameterLimits in backend/control_plane.
+// Shared document types and upload limits for document storage.
 export const DOCUMENT_TYPES = ['ACCRUAL', 'CONTRACT', 'AMENDMENT', 'TIMESHEET', 'INVOICE', 'LEDGER', 'OTHER'] as const;
 export type DocumentType = (typeof DOCUMENT_TYPES)[number];
 export const MEDIA_TYPES = ['text/csv', 'application/json', 'text/plain', 'application/pdf'] as const;
