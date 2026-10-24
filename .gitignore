@@ -11,3 +11,6 @@ __pycache__/
 *.py[cod]
 .pytest_cache/
 *.log
+
+# SpacetimeDB local tokens
+backend/.secrets/

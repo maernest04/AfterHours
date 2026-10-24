@@ -1,0 +1,2 @@
+invoice_number,contractor,service_start,service_end,minutes,amount,posting_status,posted_date
+INV-ACME-0812,J. Rivera (SYNTHETIC),2026-08-01,2026-08-31,2400,4000.00,POSTED,2026-09-05
