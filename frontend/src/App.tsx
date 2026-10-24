@@ -40,7 +40,9 @@ export default function App({
   providedAdapter?: MockReviewAdapter;
 }) {
   const [adapter] = useState(() => providedAdapter ?? new MockReviewAdapter());
-  const [snapshot, setSnapshot] = useState<CaseSnapshot>(adapter.snapshot);
+  // Copy: the adapter mutates its own snapshot, so sharing it would make acceptSnapshot
+  // see every update as stale and skip re-rendering.
+  const [snapshot, setSnapshot] = useState<CaseSnapshot>(() => structuredClone(adapter.snapshot));
   const [screen, setScreen] = useState<"review" | "overview">("review");
   const [selected, setSelected] = useState<string | null>(null);
   const [inspector, setInspector] = useState(false);

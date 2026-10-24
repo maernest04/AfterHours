@@ -18,6 +18,8 @@ type Frame = {
   status?: CaseSnapshot["status"];
   blocker?: string;
   proposal?: boolean;
+  /** How long this frame lasts, in multiples of the base pace (agent work takes longer). */
+  hold?: number;
 };
 export class MockReviewAdapter implements ReviewAdapter {
   private listeners = new Set<(s: CaseSnapshot) => void>();
@@ -29,7 +31,7 @@ export class MockReviewAdapter implements ReviewAdapter {
   snapshot: CaseSnapshot;
   constructor(
     variant: Variant = "amendment",
-    private pace = 650,
+    private pace = 700,
   ) {
     this.snapshot = this.initial(variant);
   }
@@ -136,8 +138,10 @@ export class MockReviewAdapter implements ReviewAdapter {
     this.publish();
     this.next();
   }
-  private schedule() {
-    this.timer = setTimeout(() => this.next(), this.pace);
+  private hold = 1;
+  private schedule(hold = this.hold) {
+    this.hold = hold;
+    this.timer = setTimeout(() => this.next(), this.pace * hold);
   }
   private next() {
     if (this.snapshot.paused) return;
@@ -155,14 +159,18 @@ export class MockReviewAdapter implements ReviewAdapter {
       );
     this.event(f.action, f.outcome, f.evidence);
     this.publish();
-    if (this.index < this.frames.length) this.schedule();
+    if (this.index < this.frames.length) this.schedule(f.hold ?? 1);
   }
   private makeFrames(): Frame[] {
     const v = this.snapshot.variant;
     const frames: Frame[] = [
       {
-        nodes: { accrual: "complete", read: "running" },
-        edges: [["accrual", "read"]],
+        nodes: { import: "complete", accrual: "complete", read: "running" },
+        edges: [
+          ["import", "accrual"],
+          ["accrual", "read"],
+        ],
+        hold: 4,
         action: "Reading evidence",
         outcome: "Posted JE-0098 is the baseline; original accrual is $7,000.",
         evidence: ["ledger"],
@@ -180,27 +188,40 @@ export class MockReviewAdapter implements ReviewAdapter {
           "read",
           x,
         ]),
+        hold: 2.5,
         action: "Parallel source checks",
         outcome:
           "Four independent checks are running. Matching waits for all four.",
       },
+      // The four checks finish at different times; each dot leaves as its box completes.
       {
-        nodes: { contract: "complete", work: "complete" },
-        edges: [
-          ["contract", "schema"],
-          ["work", "schema"],
-        ],
-        action: "Contract and hours checked",
-        outcome:
-          "Two checks complete; invoice and ledger checks are still running.",
-        evidence: ["contract", "work"],
+        nodes: { work: "complete" },
+        edges: [["work", "schema"]],
+        hold: 1.1,
+        action: "Approved hours checked",
+        outcome: "70 approved hours confirmed. Three checks still running.",
+        evidence: ["work"],
       },
       {
-        nodes: { invoice: "complete", ledger: "complete", schema: "running" },
-        edges: [
-          ["invoice", "schema"],
-          ["ledger", "schema"],
-        ],
+        nodes: { contract: "complete" },
+        edges: [["contract", "schema"]],
+        hold: 1.7,
+        action: "Contract terms checked",
+        outcome: "Original $100/hour rate confirmed. Invoice and ledger checks still running.",
+        evidence: ["contract"],
+      },
+      {
+        nodes: { ledger: "complete" },
+        edges: [["ledger", "schema"]],
+        hold: 1.2,
+        action: "Ledger balance checked",
+        outcome: "$7,000 is already posted. The invoice check is still running.",
+        evidence: ["ledger"],
+      },
+      {
+        nodes: { invoice: "complete", schema: "running" },
+        edges: [["invoice", "schema"]],
+        hold: 1.4,
         action: "Source checks complete",
         outcome:
           v === "no-change"
@@ -229,12 +250,14 @@ export class MockReviewAdapter implements ReviewAdapter {
       {
         nodes: { schema: "complete", match: "running" },
         edges: [["schema", "match"]],
+        hold: 3.5,
         action: "Joining the records",
         outcome: "All required source checks passed.",
       },
       {
         nodes: { match: "complete", agrees: "running" },
         edges: [["match", "agrees"]],
+        hold: 1.6,
         action: "Comparing the evidence",
         outcome:
           v === "no-change"
@@ -254,7 +277,9 @@ export class MockReviewAdapter implements ReviewAdapter {
             agrees: "complete",
             unchanged: "complete",
             calculate: "skipped",
+            proposal: "skipped",
             review: "skipped",
+            approved: "skipped",
             export: "skipped",
           },
           edges: [["agrees", "unchanged"]],
@@ -267,7 +292,8 @@ export class MockReviewAdapter implements ReviewAdapter {
     frames.push({
       nodes: { agrees: "complete", mailbox: "running" },
       edges: [["agrees", "mailbox"]],
-      action: "Investigating the rate conflict",
+      hold: 3.5,
+        action: "Investigating the rate conflict",
       outcome:
         "Search for an authorized amendment, not merely a requested rate.",
     });
@@ -277,13 +303,15 @@ export class MockReviewAdapter implements ReviewAdapter {
         {
           nodes: { mailbox: "waiting", retry: "running" },
           edges: [["mailbox", "retry"]],
-          action: "Provider temporarily unavailable",
+          hold: 2.5,
+        action: "Provider temporarily unavailable",
           outcome: "Retry 1 of 2. No model call is made in this demo.",
         },
         {
           nodes: { mailbox: "running", retry: "waiting" },
           edges: [["retry", "mailbox"]],
-          action: "Retrying mailbox search",
+          hold: 2.5,
+        action: "Retrying mailbox search",
           outcome: "Retry 2 of 2.",
         },
         {
@@ -298,7 +326,8 @@ export class MockReviewAdapter implements ReviewAdapter {
     frames.push({
       nodes: { mailbox: "complete", threads: "running" },
       edges: [["mailbox", "threads"]],
-      action: "Searching email threads",
+      hold: 2.5,
+        action: "Searching email threads",
       outcome: "Reviewing rate amendments and source metadata.",
     });
     if (v === "missing")
@@ -320,6 +349,7 @@ export class MockReviewAdapter implements ReviewAdapter {
       {
         nodes: { threads: "complete", attachments: "running" },
         edges: [["threads", "attachments"]],
+        hold: 2.5,
         action: "Reading the signed attachment",
         outcome:
           "Found a September 14 amendment and a separate unapproved $130 request.",
@@ -328,6 +358,7 @@ export class MockReviewAdapter implements ReviewAdapter {
       {
         nodes: { attachments: "complete", authority: "running" },
         edges: [["attachments", "authority"]],
+        hold: 2,
         action: "Checking authority and effective date",
         outcome: "Validate authorized signatures and the work dates.",
         evidence: ["amendment", "work"],
@@ -350,6 +381,7 @@ export class MockReviewAdapter implements ReviewAdapter {
       {
         nodes: { authority: "complete", amendment: "complete" },
         edges: [["authority", "amendment"]],
+        hold: 1.4,
         action: "Amendment verified",
         outcome:
           "$110/hour applies to all 70 hours. Excluded the unapproved $130 request.",
@@ -358,6 +390,7 @@ export class MockReviewAdapter implements ReviewAdapter {
       {
         nodes: { calculate: "running" },
         edges: [["amendment", "calculate"]],
+        hold: 2,
         action: "Calculating the difference",
         outcome:
           "Deterministic fixture calculation: $7,700 target less $7,000 posted.",
@@ -366,6 +399,7 @@ export class MockReviewAdapter implements ReviewAdapter {
         nodes: { calculate: "complete", balance: "running" },
         edges: [["calculate", "balance"]],
         proposal: true,
+        hold: 1.6,
         action: "Validating journal and period",
         outcome:
           "Proposed debit and credit are each $700; this is an adjustment only.",
@@ -387,8 +421,11 @@ export class MockReviewAdapter implements ReviewAdapter {
     return [
       ...frames,
       {
-        nodes: { balance: "complete", review: "waiting" },
-        edges: [["balance", "review"]],
+        nodes: { balance: "complete", proposal: "complete", review: "waiting" },
+        edges: [
+          ["balance", "proposal"],
+          ["proposal", "review"],
+        ],
         status: "review",
         action: "Awaiting demo reviewer",
         outcome: `Proposal V${this.snapshot.inputRevision} is ready. A fresh email decision is required.`,
@@ -420,8 +457,10 @@ export class MockReviewAdapter implements ReviewAdapter {
     this.snapshot.approvedVersion = version;
     this.snapshot.status = "approved";
     this.snapshot.nodeStates.review = "complete";
+    this.snapshot.nodeStates.approved = "complete";
     this.snapshot.nodeStates.export = "waiting";
-    this.traverse("review", "export");
+    this.traverse("review", "approved");
+    this.traverse("approved", "export");
     this.event(
       "Simulated approval email acknowledged",
       `Demo reviewer approved proposal V${version}. Export is available; no entry has been posted.`,

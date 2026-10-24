@@ -81,11 +81,38 @@ afterEach(() => {
   vi.useRealTimers();
 });
 describe("workspace interactions", () => {
-  it("renders all 25 branch states, inspects dormant evidence and closes with Escape", async () => {
+  it("lights a box only after the travelling dot reaches it", async () => {
+    const a = new MockReviewAdapter("amendment", 1000);
+    render(<App providedAdapter={a} />);
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /Start review/ }));
+    });
+    expect(a.snapshot.nodeStates.read).toBe("running");
+    expect(screen.getByRole("button", { name: "Read the evidence, dormant" })).toBeTruthy();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(800);
+    });
+    expect(screen.getByRole("button", { name: "Read the evidence, running" })).toBeTruthy();
+  });
+  it("marks traversed edges as done once the run passes them", async () => {
+    const a = new MockReviewAdapter("amendment", 10);
+    const { container } = render(<App providedAdapter={a} />);
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /Start review/ }));
+    });
+    await act(async () => {
+      await vi.runAllTimersAsync();
+    });
+    const done = [
+      ...container.querySelectorAll<SVGPathElement>(".react-flow__edge-path"),
+    ].filter((p) => p.style.strokeDasharray === "");
+    expect(done.length).toBeGreaterThan(10);
+  });
+  it("renders all 28 branch states, inspects dormant evidence and closes with Escape", async () => {
     const a = new MockReviewAdapter("amendment", 10);
     render(<App providedAdapter={a} />);
     expect(screen.getAllByRole("button", { name: /, dormant$/ })).toHaveLength(
-      25,
+      28,
     );
     const invoice = screen.getByRole("button", {
       name: "Invoice coverage, dormant",

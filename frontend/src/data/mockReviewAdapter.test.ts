@@ -14,20 +14,24 @@ describe("deterministic review, version gates and generic CSV", () => {
     await vi.runAllTimersAsync();
     return a;
   }
-  it("has exactly 25 visible states with branches and cycles", () => {
-    expect(steps).toHaveLength(25);
-    expect(new Set(steps.map((s) => s.id)).size).toBe(25);
+  it("has exactly 28 visible states with branches and cycles", () => {
+    expect(steps).toHaveLength(28);
+    expect(new Set(steps.map((s) => s.id)).size).toBe(28);
     expect(links.filter((l) => l.source === "read")).toHaveLength(4);
-    expect(links).toContainEqual({
-      source: "rejected",
-      target: "read",
-      label: "new revision",
-    });
+    expect(links).toContainEqual(
+      expect.objectContaining({
+        source: "rejected",
+        target: "read",
+        label: "new revision",
+      }),
+    );
   });
   it("waits for all four independent checks before the join", async () => {
     const a = new MockReviewAdapter("amendment", 10);
     await a.startReview(CASE_ID);
-    await vi.advanceTimersByTimeAsync(20);
+    // Frames hold for different durations; step until the first two checks finish.
+    while (a.snapshot.nodeStates.contract !== "complete")
+      await vi.advanceTimersByTimeAsync(5);
     expect(a.snapshot.nodeStates.contract).toBe("complete");
     expect(a.snapshot.nodeStates.invoice).toBe("running");
     expect(a.snapshot.nodeStates.schema).toBe("queued");

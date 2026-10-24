@@ -383,7 +383,6 @@ button.primary:not(:disabled):hover {
   letter-spacing: 0.1px;
 }
 .react-flow__node-region {
-  height: 820px;
   border: 0;
   pointer-events: none;
 }
@@ -392,7 +391,8 @@ button.primary:not(:disabled):hover {
   border: 1.4px solid #b9c9af;
   border-radius: 7px;
   width: 195px;
-  min-height: 79px;
+  height: 96px; /* fixed: edge routes in data/layout.ts assume NODE_W x NODE_H */
+  overflow: hidden;
   padding: 13px 12px 10px;
   color: #40523a;
   box-shadow: 0 2px 3px #263d2206;
@@ -471,11 +471,77 @@ button.primary:not(:disabled):hover {
 .workflow-node.guard {
   border-radius: 18px 5px 18px 5px;
 }
+/* Edges are drawn from precomputed routes, not handles. */
 .react-flow__handle {
-  background: #afc29e;
-  width: 6px;
-  height: 6px;
-  border: 1px solid #f7f9f4;
+  opacity: 0;
+  pointer-events: none;
+}
+.edge-label {
+  position: absolute;
+  pointer-events: none;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: #f7f9f4;
+  border: 1px solid #d5ddcf;
+  color: #6b7a63;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.edge-label.done {
+  background: #e3efda;
+  border-color: #8fb57c;
+  color: #2f5f37;
+}
+.edge-pulse {
+  fill: #3f7f4f;
+}
+.edge-pulse.travelling {
+  fill: #2f6b3c;
+  stroke: #e7f3d9;
+  stroke-width: 2;
+}
+/* Running steps show an indeterminate loading bar so long agent work reads as "working". */
+.workflow-node {
+  position: relative;
+}
+.workflow-node.running::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 3px;
+  background: linear-gradient(90deg, transparent, #55893e, transparent);
+  background-size: 40% 100%;
+  background-repeat: no-repeat;
+  animation: node-loading 1.3s ease-in-out infinite;
+}
+.workflow-node.running .node-icon svg {
+  animation: node-spin 1.6s linear infinite;
+}
+@keyframes node-loading {
+  from {
+    background-position: -40% 0;
+  }
+  to {
+    background-position: 140% 0;
+  }
+}
+@keyframes node-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .workflow-node.running::after,
+  .workflow-node.running .node-icon svg {
+    animation: none;
+  }
+}
+.react-flow__edge-path {
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 .zoom-controls {
   position: absolute;
