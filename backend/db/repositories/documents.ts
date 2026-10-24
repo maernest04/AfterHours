@@ -5,7 +5,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import type { DbConnection } from '../bindings/index';
 import { waitFor } from './client';
 
-export const DOC_TYPES = ['CONTRACT', 'AMENDMENT', 'TIMESHEET', 'INVOICE', 'LEDGER_EXPORT', 'OTHER'] as const;
+export const DOC_TYPES = ['ACCRUAL', 'CONTRACT', 'AMENDMENT', 'TIMESHEET', 'INVOICE', 'LEDGER', 'OTHER'] as const;
 export type DocType = (typeof DOC_TYPES)[number];
 
 type Rows<T extends { iter(): Iterable<unknown> }> = T extends { iter(): Iterable<infer R> } ? R : never;

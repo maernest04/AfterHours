@@ -18,6 +18,8 @@ import {
   verifyFileOnServer,
 } from '../repositories/documents';
 import { waitFor } from '../repositories/client';
+import { COMPANY_ID, createSpacetimeDataPlane } from '../repositories/data_plane';
+import * as api from '../../control_plane/api/index.ts';
 
 const results: Array<{ name: string; ok: boolean; detail?: string }> = [];
 async function check(name: string, fn: () => Promise<void> | void) {
@@ -141,6 +143,31 @@ await check('store and read extracted text', async () => {
   await saveDocumentText(conn, contractId, new TextDecoder().decode(contractBytes), 'EXTRACTED');
   const row = await waitFor(() => getDocumentText(conn, contractId), 'document text');
   assert(row.extractionStatus === 'EXTRACTED' && row.text.includes(ref), 'text row mismatch');
+});
+
+// --- control plane -> DataPlane adapter -> SpacetimeDB --------------------------------------
+const dataPlane = createSpacetimeDataPlane(conn);
+const gateway = { kind: 'gateway' as const, companyId: COMPANY_ID, serviceIdentity: 'smoke', requestId: ref };
+const ledgerBytes = text(`entry_id,vendor_id,period,kind,amount,status\n${ref},V-TEST,2026-09,ACCRUAL,1.00,POSTED\n`);
+
+await check('control plane imports.upload stores through the adapter', async () => {
+  const receipt = await api.imports.upload(gateway, { filename: 'ledger.csv', mediaType: 'text/csv', bytes: ledgerBytes, type: 'LEDGER' }, dataPlane);
+  assert(receipt.contentHash === sha256(ledgerBytes), 'receipt hash mismatch');
+  const read = await api.evidence.readDocument(gateway, { caseId: ref, documentId: receipt.uploadId }, dataPlane);
+  assert(read.document.id === receipt.uploadId && read.document.type === 'LEDGER' && read.document.version === 1, 'document summary mismatch');
+  assert(read.mediaType === 'text/csv' && Buffer.from(read.bytes).equals(Buffer.from(ledgerBytes)), 'bytes mismatch');
+});
+
+await check('control plane accepts a 10 MiB upload at its limit', async () => {
+  const big = new Uint8Array(10 * 1024 * 1024).fill(0x41);
+  const receipt = await api.imports.upload(gateway, { filename: 'big.txt', mediaType: 'text/plain', bytes: big, type: 'OTHER' }, dataPlane);
+  assert(getFile(conn, getDocument(conn, BigInt(receipt.uploadId))!.fileId)!.byteSize === big.length, 'size mismatch');
+});
+
+await check('adapter rejects other companies and unbuilt operations', async () => {
+  await rejects(api.evidence.readDocument({ ...gateway, companyId: 'other-co' }, { caseId: ref, documentId: String(contractId) }, dataPlane), /Unknown company/);
+  await rejects(api.evidence.readDocument(gateway, { caseId: 'some-other-case', documentId: String(contractId) }, dataPlane), /not found in case/);
+  await rejects(api.cases.get(gateway, { caseId: ref }, dataPlane), /No data-plane adapter is connected for cases.get/);
 });
 
 conn.disconnect();
