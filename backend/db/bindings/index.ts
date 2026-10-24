@@ -34,22 +34,68 @@ import {
 } from "spacetimedb";
 
 // Import all reducer arg schemas
+import ClaimJobReducer from "./claim_job_reducer";
+import CompleteJobReducer from "./complete_job_reducer";
+import ConfigureJobPolicyReducer from "./configure_job_policy_reducer";
 import ConfigureSettingsReducer from "./configure_settings_reducer";
+import FinalizeImportReducer from "./finalize_import_reducer";
+import HeartbeatJobReducer from "./heartbeat_job_reducer";
 import RegisterServiceIdentityReducer from "./register_service_identity_reducer";
+import StartReviewReducer from "./start_review_reducer";
 import StoreDocumentReducer from "./store_document_reducer";
 import StoreDocumentVersionReducer from "./store_document_version_reducer";
+import StoreEmailReducer from "./store_email_reducer";
 
 // Import all procedure arg schemas
 
 // Import all table schema definitions
+import AllocationsViewRow from "./allocations_view_table";
+import AttachmentsViewRow from "./attachments_view_table";
+import CaseDocumentsViewRow from "./case_documents_view_table";
+import CasesViewRow from "./cases_view_table";
 import DocumentsViewRow from "./documents_view_table";
+import EmailsViewRow from "./emails_view_table";
+import FactsViewRow from "./facts_view_table";
+import InvoiceLinesViewRow from "./invoice_lines_view_table";
+import JobResultsViewRow from "./job_results_view_table";
+import JobsViewRow from "./jobs_view_table";
+import LedgerRecordsViewRow from "./ledger_records_view_table";
 import MyServiceIdentityRow from "./my_service_identity_table";
 import SettingsViewRow from "./settings_view_table";
+import WorkItemsViewRow from "./work_items_view_table";
 
 /** Type-only namespace exports for generated type groups. */
 
 /** The schema information for all tables in this module. This is defined the same was as the tables would have been defined in the server. */
 const tablesSchema = __schema({
+  allocationsView: __table({
+    name: 'allocations_view',
+    indexes: [
+    ],
+    constraints: [
+    ],
+  }, AllocationsViewRow),
+  attachmentsView: __table({
+    name: 'attachments_view',
+    indexes: [
+    ],
+    constraints: [
+    ],
+  }, AttachmentsViewRow),
+  caseDocumentsView: __table({
+    name: 'case_documents_view',
+    indexes: [
+    ],
+    constraints: [
+    ],
+  }, CaseDocumentsViewRow),
+  casesView: __table({
+    name: 'cases_view',
+    indexes: [
+    ],
+    constraints: [
+    ],
+  }, CasesViewRow),
   documentsView: __table({
     name: 'documents_view',
     indexes: [
@@ -57,6 +103,48 @@ const tablesSchema = __schema({
     constraints: [
     ],
   }, DocumentsViewRow),
+  emailsView: __table({
+    name: 'emails_view',
+    indexes: [
+    ],
+    constraints: [
+    ],
+  }, EmailsViewRow),
+  factsView: __table({
+    name: 'facts_view',
+    indexes: [
+    ],
+    constraints: [
+    ],
+  }, FactsViewRow),
+  invoiceLinesView: __table({
+    name: 'invoice_lines_view',
+    indexes: [
+    ],
+    constraints: [
+    ],
+  }, InvoiceLinesViewRow),
+  jobResultsView: __table({
+    name: 'job_results_view',
+    indexes: [
+    ],
+    constraints: [
+    ],
+  }, JobResultsViewRow),
+  jobsView: __table({
+    name: 'jobs_view',
+    indexes: [
+    ],
+    constraints: [
+    ],
+  }, JobsViewRow),
+  ledgerRecordsView: __table({
+    name: 'ledger_records_view',
+    indexes: [
+    ],
+    constraints: [
+    ],
+  }, LedgerRecordsViewRow),
   myServiceIdentity: __table({
     name: 'my_service_identity',
     indexes: [
@@ -71,14 +159,28 @@ const tablesSchema = __schema({
     constraints: [
     ],
   }, SettingsViewRow),
+  workItemsView: __table({
+    name: 'work_items_view',
+    indexes: [
+    ],
+    constraints: [
+    ],
+  }, WorkItemsViewRow),
 });
 
 /** The schema information for all reducers in this module. This is defined the same way as the reducers would have been defined in the server, except the body of the reducer is omitted in code generation. */
 const reducersSchema = __reducers(
+  __reducerSchema("claim_job", ClaimJobReducer),
+  __reducerSchema("complete_job", CompleteJobReducer),
+  __reducerSchema("configure_job_policy", ConfigureJobPolicyReducer),
   __reducerSchema("configure_settings", ConfigureSettingsReducer),
+  __reducerSchema("finalize_import", FinalizeImportReducer),
+  __reducerSchema("heartbeat_job", HeartbeatJobReducer),
   __reducerSchema("register_service_identity", RegisterServiceIdentityReducer),
+  __reducerSchema("start_review", StartReviewReducer),
   __reducerSchema("store_document", StoreDocumentReducer),
   __reducerSchema("store_document_version", StoreDocumentVersionReducer),
+  __reducerSchema("store_email", StoreEmailReducer),
 );
 
 /** The schema information for all procedures in this module. This is defined the same way as the procedures would have been defined in the server. */

@@ -16,6 +16,68 @@ export const Account = __t.object("Account", {
 });
 export type Account = __Infer<typeof Account>;
 
+export const Allocations = __t.object("Allocations", {
+  id: __t.u64(),
+  caseId: __t.u64(),
+  inputRevision: __t.u32(),
+  jobId: __t.u64(),
+  workItemId: __t.u64(),
+  contractDocumentId: __t.u64(),
+  invoiceLineIds: __t.array(__t.u64()),
+  ledgerRecordIds: __t.array(__t.u64()),
+  evidenceIds: __t.array(__t.string()),
+  validationStatus: __t.string(),
+  createdAt: __t.timestamp(),
+});
+export type Allocations = __Infer<typeof Allocations>;
+
+export const AllocationsView = __t.object("AllocationsView", {});
+export type AllocationsView = __Infer<typeof AllocationsView>;
+
+export const Attachments = __t.object("Attachments", {
+  id: __t.u64(),
+  emailId: __t.u64(),
+  documentId: __t.u64(),
+});
+export type Attachments = __Infer<typeof Attachments>;
+
+export const AttachmentsView = __t.object("AttachmentsView", {});
+export type AttachmentsView = __Infer<typeof AttachmentsView>;
+
+export const CaseDocuments = __t.object("CaseDocuments", {
+  id: __t.u64(),
+  caseId: __t.u64(),
+  documentId: __t.u64(),
+  inputRevision: __t.u32(),
+});
+export type CaseDocuments = __Infer<typeof CaseDocuments>;
+
+export const CaseDocumentsView = __t.object("CaseDocumentsView", {});
+export type CaseDocumentsView = __Infer<typeof CaseDocumentsView>;
+
+export const Cases = __t.object("Cases", {
+  id: __t.u64(),
+  companyId: __t.string(),
+  vendorId: __t.string(),
+  servicePeriodFrom: __t.string(),
+  servicePeriodTo: __t.string(),
+  postingPeriod: __t.string(),
+  originalStatus: __t.string(),
+  originalAmountCents: __t.string(),
+  sourceEntryId: __t.string(),
+  inputRevision: __t.u32(),
+  state: __t.string(),
+  currentProposalId: __t.option(__t.u64()),
+  blockers: __t.array(__t.string()),
+  idempotencyKey: __t.string(),
+  createdAt: __t.timestamp(),
+  updatedAt: __t.timestamp(),
+});
+export type Cases = __Infer<typeof Cases>;
+
+export const CasesView = __t.object("CasesView", {});
+export type CasesView = __Infer<typeof CasesView>;
+
 export const Documents = __t.object("Documents", {
   id: __t.u64(),
   companyId: __t.string(),
@@ -36,6 +98,173 @@ export type Documents = __Infer<typeof Documents>;
 
 export const DocumentsView = __t.object("DocumentsView", {});
 export type DocumentsView = __Infer<typeof DocumentsView>;
+
+export const Emails = __t.object("Emails", {
+  id: __t.u64(),
+  companyId: __t.string(),
+  vendorId: __t.string(),
+  threadId: __t.string(),
+  messageKey: __t.string(),
+  sender: __t.string(),
+  recipients: __t.array(__t.string()),
+  subject: __t.string(),
+  sentAt: __t.string(),
+  body: __t.string(),
+});
+export type Emails = __Infer<typeof Emails>;
+
+export const EmailsView = __t.object("EmailsView", {});
+export type EmailsView = __Infer<typeof EmailsView>;
+
+export const FactIn = __t.object("FactIn", {
+  documentId: __t.u64(),
+  pageOrRow: __t.string(),
+  excerpt: __t.string(),
+  field: __t.string(),
+  value: __t.string(),
+});
+export type FactIn = __Infer<typeof FactIn>;
+
+export const Facts = __t.object("Facts", {
+  id: __t.u64(),
+  companyId: __t.string(),
+  caseId: __t.u64(),
+  inputRevision: __t.u32(),
+  documentId: __t.u64(),
+  pageOrRow: __t.string(),
+  excerpt: __t.string(),
+  field: __t.string(),
+  value: __t.string(),
+  validationStatus: __t.string(),
+  reason: __t.string(),
+  source: __t.string(),
+  jobId: __t.option(__t.u64()),
+  modelRun: __t.string(),
+  createdAt: __t.timestamp(),
+});
+export type Facts = __Infer<typeof Facts>;
+
+export const FactsView = __t.object("FactsView", {});
+export type FactsView = __Infer<typeof FactsView>;
+
+export const InvoiceLines = __t.object("InvoiceLines", {
+  id: __t.u64(),
+  caseId: __t.u64(),
+  inputRevision: __t.u32(),
+  factId: __t.u64(),
+  invoiceNumber: __t.string(),
+  contractor: __t.string(),
+  serviceStart: __t.string(),
+  serviceEnd: __t.string(),
+  minutes: __t.u32(),
+  amountCents: __t.string(),
+  postingStatus: __t.string(),
+  postedDate: __t.string(),
+});
+export type InvoiceLines = __Infer<typeof InvoiceLines>;
+
+export const InvoiceLinesView = __t.object("InvoiceLinesView", {});
+export type InvoiceLinesView = __Infer<typeof InvoiceLinesView>;
+
+export const InvoiceRowIn = __t.object("InvoiceRowIn", {
+  documentId: __t.u64(),
+  pageOrRow: __t.string(),
+  excerpt: __t.string(),
+  invoiceNumber: __t.string(),
+  contractor: __t.string(),
+  serviceStart: __t.string(),
+  serviceEnd: __t.string(),
+  minutes: __t.u32(),
+  amountCents: __t.string(),
+  postingStatus: __t.string(),
+  postedDate: __t.string(),
+});
+export type InvoiceRowIn = __Infer<typeof InvoiceRowIn>;
+
+export const JobPolicy = __t.object("JobPolicy", {
+  id: __t.u32(),
+  leaseSeconds: __t.u32(),
+  maxAttempts: __t.u32(),
+});
+export type JobPolicy = __Infer<typeof JobPolicy>;
+
+export const JobResults = __t.object("JobResults", {
+  id: __t.u64(),
+  jobId: __t.u64(),
+  caseId: __t.u64(),
+  modelRun: __t.string(),
+  summary: __t.string(),
+  explanationEvidenceIds: __t.array(__t.string()),
+  evidenceIds: __t.array(__t.string()),
+  unresolvedQuestions: __t.array(__t.string()),
+  createdAt: __t.timestamp(),
+});
+export type JobResults = __Infer<typeof JobResults>;
+
+export const JobResultsView = __t.object("JobResultsView", {});
+export type JobResultsView = __Infer<typeof JobResultsView>;
+
+export const Jobs = __t.object("Jobs", {
+  id: __t.u64(),
+  jobKey: __t.string(),
+  companyId: __t.string(),
+  caseId: __t.u64(),
+  caseRevision: __t.u32(),
+  role: __t.string(),
+  status: __t.string(),
+  attempts: __t.u32(),
+  leaseToken: __t.string(),
+  leaseExpiresAtMicros: __t.i64(),
+  leaseConnectionId: __t.string(),
+  lastError: __t.string(),
+  createdAt: __t.timestamp(),
+  updatedAt: __t.timestamp(),
+});
+export type Jobs = __Infer<typeof Jobs>;
+
+export const JobsView = __t.object("JobsView", {});
+export type JobsView = __Infer<typeof JobsView>;
+
+export const LedgerRecords = __t.object("LedgerRecords", {
+  id: __t.u64(),
+  caseId: __t.u64(),
+  inputRevision: __t.u32(),
+  factId: __t.u64(),
+  entryId: __t.string(),
+  vendorId: __t.string(),
+  period: __t.string(),
+  kind: __t.string(),
+  amountCents: __t.string(),
+  status: __t.string(),
+  description: __t.string(),
+});
+export type LedgerRecords = __Infer<typeof LedgerRecords>;
+
+export const LedgerRecordsView = __t.object("LedgerRecordsView", {});
+export type LedgerRecordsView = __Infer<typeof LedgerRecordsView>;
+
+export const LedgerRowIn = __t.object("LedgerRowIn", {
+  documentId: __t.u64(),
+  pageOrRow: __t.string(),
+  excerpt: __t.string(),
+  entryId: __t.string(),
+  vendorId: __t.string(),
+  period: __t.string(),
+  kind: __t.string(),
+  amountCents: __t.string(),
+  status: __t.string(),
+  description: __t.string(),
+});
+export type LedgerRowIn = __Infer<typeof LedgerRowIn>;
+
+export const MatchIn = __t.object("MatchIn", {
+  workItemId: __t.u64(),
+  contractDocumentId: __t.u64(),
+  invoiceLineIds: __t.array(__t.u64()),
+  ledgerRecordIds: __t.array(__t.u64()),
+  evidenceIds: __t.array(__t.string()),
+});
+export type MatchIn = __Infer<typeof MatchIn>;
 
 export const ModuleOwner = __t.object("ModuleOwner", {
   id: __t.u32(),
@@ -76,4 +305,40 @@ export type Settings = __Infer<typeof Settings>;
 
 export const SettingsView = __t.object("SettingsView", {});
 export type SettingsView = __Infer<typeof SettingsView>;
+
+export const SweepSchedule = __t.object("SweepSchedule", {
+  scheduledId: __t.u64(),
+  scheduledAt: __t.scheduleAt(),
+});
+export type SweepSchedule = __Infer<typeof SweepSchedule>;
+
+export const TimesheetRowIn = __t.object("TimesheetRowIn", {
+  documentId: __t.u64(),
+  pageOrRow: __t.string(),
+  excerpt: __t.string(),
+  contractor: __t.string(),
+  serviceDate: __t.string(),
+  approvedMinutes: __t.u32(),
+  claimedRateCents: __t.option(__t.string()),
+  status: __t.string(),
+  approvedBy: __t.string(),
+});
+export type TimesheetRowIn = __Infer<typeof TimesheetRowIn>;
+
+export const WorkItems = __t.object("WorkItems", {
+  id: __t.u64(),
+  caseId: __t.u64(),
+  inputRevision: __t.u32(),
+  factId: __t.u64(),
+  vendorId: __t.string(),
+  contractor: __t.string(),
+  serviceDate: __t.string(),
+  approvedMinutes: __t.u32(),
+  claimedRateCents: __t.option(__t.string()),
+  approvedBy: __t.string(),
+});
+export type WorkItems = __Infer<typeof WorkItems>;
+
+export const WorkItemsView = __t.object("WorkItemsView", {});
+export type WorkItemsView = __Infer<typeof WorkItemsView>;
 

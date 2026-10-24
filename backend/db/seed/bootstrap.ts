@@ -1,5 +1,6 @@
-// Owner bootstrap (run after every publish/reset): configure the fixed demo company and register
-// the gateway and worker service identities. Idempotent.
+// Owner bootstrap (run after every publish/reset): configure the fixed demo company, the job policy
+// (lease length, retries, expired-lease sweep) and register the gateway and worker service identities.
+// Idempotent.
 
 import { Identity } from 'spacetimedb';
 import { connect, connectAs, DB_NAME, DB_URI, ownerToken } from '../repositories/client';
@@ -23,6 +24,12 @@ await owner.conn.reducers.configureSettings({
   policyVersion: '2026.10-demo',
 });
 console.log(`[bootstrap] settings: company "${COMPANY_ID}", USD, 6100 / 2105`);
+
+// Brief p.4: expiring leases + bounded retries; also schedules the expired-lease sweep.
+const LEASE_SECONDS = Number(process.env.JOB_LEASE_SECONDS ?? 30);
+const MAX_ATTEMPTS = Number(process.env.JOB_MAX_ATTEMPTS ?? 3);
+await owner.conn.reducers.configureJobPolicy({ leaseSeconds: LEASE_SECONDS, maxAttempts: MAX_ATTEMPTS });
+console.log(`[bootstrap] job policy: ${LEASE_SECONDS}s leases, ${MAX_ATTEMPTS} attempts, sweep scheduled`);
 
 await owner.conn.reducers.registerServiceIdentity({ identity: Identity.fromString(gateway.identityHex), role: 'GATEWAY', label: 'Next.js gateway' });
 await owner.conn.reducers.registerServiceIdentity({ identity: Identity.fromString(worker.identityHex), role: 'WORKER', label: 'Node agent worker' });

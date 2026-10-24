@@ -16,7 +16,8 @@
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p backend/db/spacetime/spacetimedb"
   },
   "dependencies": {
-    "spacetimedb": "2.13.*"
+    "spacetimedb": "2.13.*",
+    "unpdf": "^1.9.1"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

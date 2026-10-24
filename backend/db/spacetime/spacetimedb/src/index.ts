@@ -2,12 +2,11 @@
 // Reducers check the caller (ctx.sender) and validate atomically; they return no data.
 // Clients read through the views below, which expose rows only to configured service identities.
 
-import { SenderError, t, type InferSchema, type ReducerCtx } from 'spacetimedb/server';
+import { SenderError, t } from 'spacetimedb/server';
 import spacetimedb, { Account, documents, settings } from './schema';
+import { requireCompany, requireGateway, requireOwner, requireText, type Ctx } from './auth';
 
 export default spacetimedb;
-
-type Ctx = ReducerCtx<InferSchema<typeof spacetimedb>>;
 
 // Matches DocumentType and parameterLimits in backend/control_plane.
 const DOCUMENT_TYPES = ['ACCRUAL', 'CONTRACT', 'AMENDMENT', 'TIMESHEET', 'INVOICE', 'LEDGER', 'OTHER'];
@@ -15,32 +14,6 @@ const MEDIA_TYPES = ['text/csv', 'application/json', 'text/plain', 'application/
 const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
 const ROLES = ['GATEWAY', 'WORKER'];
 const SHA256_HEX = /^[0-9a-f]{64}$/;
-
-// --- authorization ---------------------------------------------------------------------------
-
-function requireOwner(ctx: Ctx) {
-  const owner = ctx.db.moduleOwner.id.find(0);
-  if (!owner || !owner.identity.isEqual(ctx.sender)) throw new SenderError('Only the module owner may do this.');
-}
-
-/** Brief: the gateway saves validated bytes to the file store, then reducers save metadata. */
-function requireGateway(ctx: Ctx) {
-  if (ctx.db.serviceIdentity.identity.find(ctx.sender)?.role !== 'GATEWAY') {
-    throw new SenderError('Only the configured gateway identity may do this.');
-  }
-}
-
-function requireCompany(ctx: Ctx, companyId: string) {
-  const s = ctx.db.settings.id.find(0);
-  if (!s) throw new SenderError('Settings are not configured; run `npm run db:bootstrap`.');
-  if (companyId !== s.companyId) throw new SenderError(`Unknown company "${companyId}".`);
-}
-
-function requireText(value: string, field: string, max = 255): string {
-  const v = value.trim();
-  if (v.length === 0 || v.length > max) throw new SenderError(`${field} must be 1-${max} characters.`);
-  return v;
-}
 
 export const init = spacetimedb.init(ctx => {
   ctx.db.moduleOwner.insert({ id: 0, identity: ctx.sender });
@@ -234,3 +207,26 @@ export const myServiceIdentity = spacetimedb.view(
     return me ? [{ role: me.role, label: me.label }] : [];
   }
 );
+
+// --- cases, evidence, mailbox, jobs ----------------------------------------------------------------
+export {
+  finalizeImport,
+  startReview,
+  storeEmail,
+  configureJobPolicy,
+  claimJob,
+  heartbeatJob,
+  completeJob,
+  sweepExpiredLeases,
+  casesView,
+  caseDocumentsView,
+  factsView,
+  workItemsView,
+  invoiceLinesView,
+  ledgerRecordsView,
+  allocationsView,
+  emailsView,
+  attachmentsView,
+  jobsView,
+  jobResultsView,
+} from './pipeline';

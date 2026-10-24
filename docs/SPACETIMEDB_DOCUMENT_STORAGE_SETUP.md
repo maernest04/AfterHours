@@ -1,17 +1,25 @@
-# SpacetimeDB document storage: setup and handoff
+# SpacetimeDB setup and handoff
 
-**Audience:** teammates and coding agents setting this up on another machine.
-**Source of truth:** `Accrual_Correction_Brief` (revised: SpacetimeDB edition). This layer implements the brief's process boundaries for documents. Its pages are cited below as "brief p.N".
-**Phase goal:** SpacetimeDB runs locally and can store, retrieve, version and list synthetic source documents and their metadata.
+**Audience:** teammates and coding agents setting this up on another machine, or building on it.
+**Source of truth:** `Accrual_Correction_Brief` (revised: SpacetimeDB edition), cited as "brief p.N", plus the control-plane contracts in `backend/control_plane/` (Matthew's code, unchanged by this layer).
+**What exists:** the data layer the agents plug into:
+- document storage
+- cases and import
+- evidence tables
+- the mock mailbox
+- the job queue with leases
+- the read-only agent tools
 
-> **Not in this phase:** AI agents (Factory, Bitdeer), worker loops, job leasing, extraction, matching, investigation, accounting calculations, proposals, approvals, reviews, exports and CSV generation, the mock mailbox, and case workflows. This phase is **document storage only**. All data is synthetic, and no API keys are needed.
+**Building agents?** Read [`backend/agents/README.md`](../backend/agents/README.md) after §0.
+
+> **Not built yet (later phases):** agent implementations and prompts, the worker loop, model providers, the calculator, `build_proposal`, questions, exceptions, reviews and approvals, exports and CSV, and the reviewer UI. The control-plane operations for those return `DATA_PLANE_UNAVAILABLE`. All data is synthetic, and no API keys are needed.
 
 ---
 
 ## 0. Quick start (copy-paste)
 
 ```powershell
-# one-time per machine (§1)
+# one-time per machine (§2)
 iwr https://windows.spacetimedb.com -useb | iex      # macOS/Linux: curl -sSf https://install.spacetimedb.com | sh
 # open a NEW terminal, then:
 spacetime --version                                    # expect 2.13.x
@@ -24,271 +32,239 @@ npm run db:install
 # terminal A: leave running (§3)
 spacetime start
 
-# terminal B (§5-§7)
+# terminal B (§5-§6)
 npm run db:publish        # first run creates database "accrual-docs"; the CLI identity becomes owner
 npm run db:generate       # regenerate TypeScript bindings
 npm run typecheck
-npm run db:bootstrap      # owner: configure company + register gateway/worker identities (safe to re-run)
-npm run db:seed           # synthetic documents via the gateway identity (safe to re-run)
-npm run smoke             # expect: 14/14 checks passed
+npm run db:bootstrap      # owner: company, job policy + sweep, gateway/worker identities (safe to re-run)
+npm run db:seed           # demo Acme case + mock mailbox; leaves an EXTRACTION job QUEUED (safe to re-run)
+npm run smoke             # expect: 24/24 checks passed
 ```
 
-**Done when:** `npm run smoke` ends with `14/14 checks passed`, and `npm run db:sql` lists document rows for `DEMO-ACME-2026-09`.
+**Done when:**
+- `npm run smoke` ends with `24/24 checks passed`.
+- The seed's last line reads `case 1 ACR-2026-09-ACME POSTED $7000 state EXTRACTING jobs [EXTRACTION:QUEUED]`.
+
+**After pulling schema changes:** run `npm run db:reset`, `npm run db:generate`, `npm run db:bootstrap`, then `npm run db:seed`.
 
 ---
 
-## 1. Architecture (brief p.2-3, documents only)
+## 1. Architecture (brief p.2-4)
 
 ```text
 Browser ──► Next.js server gateway (control plane) ──► SpacetimeDB (private tables, reducers check caller)
-                 │  server-held GATEWAY identity              ▲ public views filter by ctx.sender
-                 └─► file store (persistent volume)           │
-Node worker (separate WORKER identity) ──── reads views ──────┘ + reads file store
+                 │  server-held GATEWAY identity              ▲   public views filter by ctx.sender
+                 └─► file store (persistent volume)           │   scheduled sweep requeues expired leases
+Node worker(s) (WORKER identity) ── claim_job / complete_job ─┘   + read views + file store
+   └─ Bitdeer / Factory model calls happen here, never in reducers
 ```
 
 | Brief requirement | Implementation |
 |---|---|
-| "Browser requests go through a Next.js server gateway; it uses a server-held SpacetimeDB identity" | The `GATEWAY` service identity. Its token is in `backend/.secrets/gateway.token` and never reaches the browser. |
-| "Tables stay private; public views check `ctx.sender` against configured gateway/worker identities" | All 4 tables are private. `documents_view`, `settings_view` and `my_service_identity` return rows only to registered identities. |
-| "A Node worker connects with a separate approved service identity" | The `WORKER` identity (`backend/.secrets/worker.token`). It can read the views but **can't write** documents. |
-| "Reducers check the caller and atomically validate state changes" | `store_document*` accept only `GATEWAY`. `configure_settings` and `register_service_identity` accept only the owner. |
-| "Original files … live on a persistent server volume … referenced by storageKey and hash" | Content-addressed file store at `FILE_STORE_DIR` (default `data/files/`). `storageKey = "sha256/<contentHash>"`, and every read is re-hashed. |
-| "Every business record belongs to the fixed demo company; the backend rejects other company IDs" | `settings.companyId` (default `demo`). Every reducer and the adapter reject any other company. |
-| "Index companyId, caseId and job status for view lookups" | `documents.companyId` is indexed. `caseId` and job status come with later phases. |
-| "Preserve source versions" | New versions are new rows linked by `supersedes_document_id`. Rows are never updated or deleted. |
+| Browser → Next.js gateway using a server-held identity; worker has a separate identity | `GATEWAY` and `WORKER` service identities, registered by the owner (`db:bootstrap`). Tokens live in `backend/.secrets/` |
+| Tables stay private; public views check `ctx.sender` | All 17 tables are private. 14 `*_view`s return rows only to registered identities |
+| Reducers check the caller and validate atomically | Each reducer starts with an owner, gateway, worker or scheduler check, then a company check |
+| Files on a persistent server volume, referenced by storageKey + hash | Content-addressed store (`data/files/`, `storageKey = sha256/<hash>`). Every read is re-hashed |
+| Import: save originals, extract facts with page/row references, check for duplicates | Gateway uploads, then `finalize_import`. Structured files are parsed **with code** into facts plus typed rows. Duplicate documents and duplicate work are flagged |
+| Jobs: stable key (case + revision + role), bounded retries, expiring leases, scheduled sweep, atomic `claim_job` | `jobs.job_key`, `job_policy` (30s, 3 attempts), and a `sweep_expired_leases` run every 2s |
+| Agent tools are read-only and scoped to the job | `backend/agents/tools`: `searchEmails`, `readEmailThread`, `readAttachment` and `getCaseEvidence`. Scope is enforced in code and again in `complete_job` |
+| Agents cannot approve, export, modify policy or write accounting entries | The worker identity can only call `claim_job`, `heartbeat_job` and `complete_job`. Its facts and matches are stored as `PROPOSED` |
+| Every record belongs to the fixed demo company | `settings.company_id` (default `demo`). Every reducer and the adapter reject any other company |
 
 ## 2. Prerequisites (one-time per machine)
 
-| Tool | Required version | Check |
+| Tool | Version | Check |
 |---|---|---|
 | Git | any | `git --version` |
-| Node.js | **22.x** (22.18+ recommended, see §10) | `node --version` |
+| Node.js | **22.x** (22.18+ recommended, see §11) | `node --version` |
 | SpacetimeDB CLI | **2.13.x**, matching the `spacetimedb` npm package | `spacetime --version` |
 
-| OS | Install the SpacetimeDB CLI |
-|---|---|
-| Windows (PowerShell) | `iwr https://windows.spacetimedb.com -useb \| iex` |
-| macOS / Linux | `curl -sSf https://install.spacetimedb.com \| sh` |
-
-- **Windows:** **open a new terminal** after installing. To refresh PATH in the current session instead, run:
+- **Install the CLI:**
+  - Windows: `iwr https://windows.spacetimedb.com -useb | iex`
+  - macOS/Linux: `curl -sSf https://install.spacetimedb.com | sh`
+- **Windows PATH:** open a new terminal afterwards, or refresh PATH in the current one:
   ```powershell
   $env:Path = [Environment]::GetEnvironmentVariable('Path','User') + ';' + $env:Path
   ```
-- **Pin the version** if `spacetime --version` isn't 2.13.x:
+- **Pin the version** if it isn't 2.13.x:
   ```powershell
   spacetime version install 2.13.0
   spacetime version use 2.13.0
   ```
-
-Install dependencies once per clone:
-
-```powershell
-git clone <repo-url> AfterHours
-cd AfterHours
-npm install          # root: spacetimedb SDK, tsx, typescript
-npm run db:install   # module dependencies used by `spacetime publish`
-```
+- **Dependencies, once per clone:** `npm install` installs the SDK, tsx, typescript and unpdf; `npm run db:install` installs the module's dependencies.
 
 ## 3. Start the local server
 
-Run this in its own terminal and leave it running:
+Run `spacetime start` in its own terminal and leave it running. It listens on `http://localhost:3000`; check it with `spacetime server ping local`. Each machine has its own server, data, identities and file store.
 
-```powershell
-spacetime start
-```
+## 4. Environment variables (all optional, server-side only)
 
-The server listens on `http://localhost:3000`; check it with `spacetime server ping local`. Each machine has its own server, data, identities and file store.
-
-## 4. Environment variables
-
-All variables are optional. To override them, run `Copy-Item .env.example .env`; npm scripts load `.env` automatically. Everything here is **server-side only**.
+To override any of these, run `Copy-Item .env.example .env`. npm scripts load `.env` automatically.
 
 | Variable | Default | Purpose |
 |---|---|---|
 | `SPACETIMEDB_URI` | `http://localhost:3000` | SpacetimeDB server |
 | `SPACETIMEDB_DATABASE` | `accrual-docs` | Database name. Lowercase letters, digits and dashes; **no underscores** |
-| `COMPANY_ID` | `demo` | Fixed demo company set by `db:bootstrap`. Must match the control plane's `context.companyId` |
-| `FILE_STORE_DIR` | `<repo>/data/files` | Persistent volume for original files (git-ignored) |
-| `SPACETIMEDB_SECRETS_DIR` | `<repo>/backend/.secrets` | Gateway and worker identity tokens (git-ignored) |
+| `COMPANY_ID` | `demo` | Fixed demo company. Must match the control plane's `context.companyId` |
+| `FILE_STORE_DIR` | `<repo>/data/files` | Persistent volume for original files. The gateway and worker must share it |
+| `SPACETIMEDB_SECRETS_DIR` | `<repo>/backend/.secrets` | Gateway and worker identity tokens |
+| `JOB_LEASE_SECONDS` / `JOB_MAX_ATTEMPTS` | `30` / `3` | Job policy, applied by `db:bootstrap` |
 | `SPACETIME_BIN` | auto-detected | Path to the `spacetime` executable if it isn't on PATH |
 
-## 5. Publish, generate and bootstrap
+## 5. Publish, generate, bootstrap
 
-```powershell
-npm run db:publish     # create or update the database, keeping its data
-npm run db:generate    # writes backend/db/bindings/ (committed; regenerate after module changes)
-npm run typecheck
-npm run db:bootstrap   # as owner: configure_settings + register GATEWAY and WORKER identities
-```
-
-- **Owner:** the first publish logs the CLI in to the **local server only**. That identity becomes the module owner, recorded by `init`. `db:bootstrap` reads the owner token with `spacetime login show --token`.
-- **Service identities:** on first run, `db:bootstrap` creates the gateway and worker identities and saves their tokens in `backend/.secrets/`. Re-running it is a no-op.
-- **`npm run db:reset`** republishes with `--delete-data=always`, which wipes all rows and the owner/identity registrations. **Re-run `db:bootstrap` afterwards.** The file store isn't wiped. Content-addressed files are harmless to keep; delete `data/files/` if you want it clean.
+| Command | Does |
+|---|---|
+| `npm run db:publish` | Creates or updates the database, keeping its data. The first publish makes the CLI's local identity the **owner** |
+| `npm run db:reset` | Republishes and **wipes all rows**, including identity registrations. Re-run `db:bootstrap` and `db:seed` afterwards |
+| `npm run db:generate` | Writes `backend/db/bindings/`. Commit the result after every module change |
+| `npm run db:bootstrap` | As owner: `configure_settings` (company "demo", USD, accounts 6100/2105), `configure_job_policy` (also schedules the sweep), and registers the gateway and worker identities (creating their tokens on first run) |
+| `npm run db:sql -- "<query>"` | Owner SQL against the private tables, e.g. `SELECT id, role, status, attempts FROM jobs` |
 
 ## 6. Seed and smoke test
 
-```powershell
-npm run db:seed    # 6 synthetic Acme documents + v2 of the timesheet under reference DEMO-ACME-2026-09
-npm run smoke      # 14 checks; exit code 1 on any failure
-npm run db:sql                                                       # id, type, version, reference_id (owner query)
-npm run db:sql -- "SELECT id, type, storage_key, byte_length FROM documents"
-```
+**`npm run db:seed`** builds the brief's demo (p.2), all synthetic:
+- **Acme Contracting (`V-ACME`):** contract at $100/h, timesheet v1 → v2 with 70 approved hours (10 × 420 min) in Sep 2026, an August invoice, a ledger export, and the accrual JSON (`ACR-2026-09-ACME`, POSTED, $7,000.00).
+- **Mock mailbox:**
+  - the countersigned **Amendment No. 1 ($110/h from 2026-09-01) as an email attachment**, deliberately *not* imported with the case, so the investigation agent has to find it
+  - a distractor that mentions a rate in the email body only ("an email alone is not approval")
+  - a prompt-injection message
+  - another vendor's email, to check search scope
+- **Import and start:** the case is imported and review started, so **case 1 is in `EXTRACTING` with an `EXTRACTION` job `QUEUED`**, ready for an agent worker.
 
-Expected seed output on a fresh database:
+**`npm run smoke`** runs 24 checks against a fresh `SMOKE-xxxxxxxx` scope each time, so it can be repeated. Matthew's API handlers are called through the adapter. It covers:
+- **Document storage and access:** the file store, hash verification, tamper detection, metadata validation, gateway-only writes, view visibility, idempotency and versioning.
+- **Import:** code-parsed facts with row references; unapproved timesheet rows become `REJECTED` facts; idempotent finalize; duplicate source entries rejected; missing inputs or duplicate work produce `WAITING_FOR_INPUT`.
+- **Case operations:** `cases.get`, `list`, `startReview`, `listJobs` and `subscribe` (live updates).
+- **The full job pipeline:**
+  - **EXTRACTION:** claim, heartbeat, and a scope-checked complete, which queues MATCHING.
+  - **MATCHING:** a complete with an unresolved question, which queues INVESTIGATION.
+  - **INVESTIGATION:** a complete, after which the case is awaiting `build_proposal`.
+  - **Rejections:** a stale or forged lease, out-of-scope evidence, and wrong-case IDs are all rejected.
+- **Agent tools:** vendor-scoped search, threads, attachment text, and scope errors.
+- **Evidence:** `evidence.list` paging and `evidence.readDocument` scope.
+- **Lease expiry:** the sweep requeues an expired job; a late completion is rejected; retries exhausted produce `RETRYABLE_ERROR`.
+- **Unbuilt operations** report `DATA_PLANE_UNAVAILABLE`.
+
+## 7. Data model
+
+All tables are private, and clients read the matching `<table>_view`. Money is an **integer-cent string**, minutes are integers, dates are `YYYY-MM-DD` and periods are `YYYY-MM`. Evidence rows carry the case `input_revision` they belong to.
+
+| Table | Key fields | Written by |
+|---|---|---|
+| `documents` | company_id, storage_key, type, version, content_hash, byte_length, media_type, original_filename, reference_id?, supersedes_document_id?, upload_key | `store_document`, `store_document_version` (gateway) |
+| `settings` | company_id, currency, expense_account, liability_account, policy_version | `configure_settings` (owner) |
+| `service_identity` / `module_owner` | identity, role (GATEWAY/WORKER) / owner identity | owner / `init` |
+| `cases` | company_id, vendor_id, service_period_from/to, posting_period, original_status (DRAFT/POSTED), original_amount_cents, source_entry_id (unique), input_revision, state, current_proposal_id?, blockers[], idempotency_key | `finalize_import`, `start_review`, job transitions |
+| `case_documents` | case_id, document_id, input_revision | `finalize_import` |
+| `facts` | case_id, input_revision, document_id, page_or_row, excerpt, field, value, validation_status (ACCEPTED/REJECTED/PROPOSED), reason, source (CODE/AGENT), job_id?, model_run | `finalize_import` (CODE), `complete_job` (AGENT, PROPOSED) |
+| `work_items` | case_id, fact_id, contractor, service_date, approved_minutes, claimed_rate_cents?, approved_by | `finalize_import` (APPROVED timesheet rows only) |
+| `invoice_lines` | case_id, fact_id, invoice_number, contractor, service_start/end, minutes, amount_cents, posting_status, posted_date | `finalize_import` |
+| `ledger_records` | case_id, fact_id, entry_id, vendor_id, period, kind (ACCRUAL/INVOICE/OTHER), amount_cents, status (POSTED/DRAFT), description | `finalize_import` |
+| `allocations` | case_id, job_id, work_item_id, contract_document_id, invoice_line_ids[], ledger_record_ids[], evidence_ids[], validation_status (PROPOSED) | `complete_job` (MATCHING) |
+| `emails` / `attachments` | vendor_id, thread_id, message_key, sender, recipients, subject, sent_at (ISO), body / email_id, document_id | `store_email` (gateway) |
+| `jobs` | job_key (case:revision:role), case_id, case_revision, role, status, attempts, lease_token, lease_expires_at_micros, lease_connection_id, last_error | `start_review`, `complete_job`, `claim_job`, `heartbeat_job`, sweep |
+| `job_results` | job_id, model_run (LIVE/REPLAYED), summary, explanation/evidence ids, unresolved_questions | `complete_job` |
+| `job_policy` / `sweep_schedule` | lease_seconds, max_attempts / schedule row | `configure_job_policy` (owner) |
+
+**Code parsing at import** (`backend/db/repositories/parsers.ts`). Headers are case-insensitive, `[]` marks an optional column, and amounts may be written like `"7,000.00"`.
+
+| Document | Columns or fields |
+|---|---|
+| TIMESHEET (CSV) | `service_date, contractor, approved_minutes, status, [billing_rate], [approved_by]` |
+| INVOICE (CSV) | `invoice_number, contractor, service_start, service_end, minutes, amount, posting_status, [posted_date]` |
+| LEDGER (CSV) | `entry_id, vendor_id, period, kind, amount, status, [description]` |
+| ACCRUAL (JSON) | `entryId, vendorId, status, amountCents\|amount, postingPeriod?, servicePeriod?{from,to}` |
+
+Contracts, amendments and PDFs are not parsed. The extraction agent reads them.
+
+## 8. Case states and the job pipeline (brief p.4)
 
 ```text
-[seed] CONTRACT  doc 1 v1  acme_msa.txt
-[seed] AMENDMENT doc 2 v1  acme_amendment_1.txt
-[seed] TIMESHEET doc 3 v1  acme_timesheet_2026-09_v1.csv
-[seed] INVOICE   doc 4 v1  acme_invoices_2026-08.csv
-[seed] LEDGER    doc 5 v1  ledger_2026-09.csv
-[seed] ACCRUAL   doc 6 v1  acme_accrual_2026-09.json
-[seed] TIMESHEET doc 7 v2  supersedes doc 3
+finalize_import ─► IMPORTED ──start_review──► EXTRACTING   [EXTRACTION job]
+      │ missing inputs / duplicate work           │ complete_job
+      ▼                                           ▼
+WAITING_FOR_INPUT                          MATCHING     [MATCHING job]
+                                                  │ complete_job with unresolvedQuestions?
+                                     no ─────────┤ yes
+                                     │            ▼
+                                     │      INVESTIGATING [INVESTIGATION job]
+                                     │            │ complete_job: questions remain → WAITING_FOR_INPUT
+                                     ▼            ▼
+                     awaiting build_proposal (later phase): every current-revision job SUCCEEDED
+Lease expired → sweep requeues; attempts exhausted → job FAILED, case RETRYABLE_ERROR
 ```
 
-The smoke test uses a fresh `SMOKE-xxxxxxxx` reference each run, so it can run repeatedly. It proves:
-- **Storage and integrity:**
-  - gateway upload puts the bytes on the file store and the metadata in SpacetimeDB
-  - bytes read back are identical and verified against their hash
-  - a tampered file is detected on read
-- **Reducer validation:** a mismatched storage key, an invalid type or media type, and another company are all rejected.
-- **Access rules:**
-  - only the gateway can write; the worker and unregistered clients are rejected, and only the owner can configure
-  - the gateway and worker can see documents through the views; an unregistered client sees nothing
-- **Versioning:**
-  - an idempotent retry creates no duplicate
-  - v2 is stored without changing v1
-  - versioning a superseded document or uploading identical content is rejected
-  - list filters work
-- **Control plane:**
-  - `imports.upload`, `evidence.readDocument` and `settings.get` work through Matthew's real API handlers
-  - a 10 MiB upload is accepted
-  - the adapter rejects other companies, documents from another case, and operations that aren't built yet
+- **Job and case status are separate** (brief p.4). Job statuses follow `JobStatus`: QUEUED, RUNNING (leased), SUCCEEDED, FAILED.
+- **The hand-off to `build_proposal`:** `isAwaitingProposal(conn, caseId)` in `repositories/cases.ts` reports when the case is ready.
+- **Evidence references** are prefixed strings: `doc:<documents.id>`, `fact:<facts.id>` and `email:<emails.id>`. All other IDs are plain decimal strings.
+- **Allowed evidence for a job:** the case's documents, plus the vendor's mailbox emails and attachments, plus the current revision's facts.
 
-## 7. Schema (the document-storage contract)
+## 9. Reducers and the control-plane adapter
 
-All tables are **private**. Clients read through views (§8). Only the owner can query tables directly, with `npm run db:sql`.
-
-### `documents` (brief p.3: `companyId, storageKey, type, version, contentHash`)
-| Column | Type | Notes |
+| Reducer | Caller | Purpose |
 |---|---|---|
-| `id` | u64, primary key, auto-increment | |
-| `company_id` | string, btree index | Always `settings.company_id` |
-| `storage_key` | string | `sha256/<content_hash>`, a file-store reference |
-| `type` | string, btree index | `ACCRUAL`, `CONTRACT`, `AMENDMENT`, `TIMESHEET`, `INVOICE`, `LEDGER` or `OTHER` (same list as the control plane's `DocumentType`) |
-| `version` | u32 | 1, 2, 3 and so on |
-| `content_hash` | string, btree index | Lowercase SHA-256 hex |
-| `byte_length` | u32 | Up to 10 MiB (the control plane's `maxUploadBytes`) |
-| `media_type` | string | `text/csv`, `application/json`, `text/plain` or `application/pdf` |
-| `original_filename` | string | |
-| `reference_id` | option\<string\> | Optional case or reference link |
-| `source_label` | string | e.g. `gateway:<serviceIdentity>` or `seed (SYNTHETIC)` |
-| `supersedes_document_id` | option\<u64\> | The previous version. Empty for v1 |
-| `upload_key` | string, unique | Idempotency key, so a retry never duplicates |
-| `created_at` | timestamp | |
+| `configure_settings`, `register_service_identity`, `configure_job_policy` | owner | Setup (`db:bootstrap`) |
+| `store_document`, `store_document_version` | gateway | Document metadata. The bytes go on the file store first |
+| `finalize_import`, `start_review` | gateway | Create the case from uploads; start the pipeline |
+| `store_email` | gateway | Mock mailbox seeding |
+| `claim_job`, `heartbeat_job`, `complete_job` | worker | Lease a job, keep it alive, submit `AgentOutput` |
+| `sweep_expired_leases` | scheduler only | Every 2s: requeue expired leases, fail exhausted jobs |
 
-### `settings` (brief p.3: "fixed demo companyId; currency, expenseAccount, liabilityAccount, policyVersion. No memberships table")
-`id` (always 0), `company_id`, `currency` (`USD`), `expense_account {code, name}`, `liability_account {code, name}`, `policy_version`.
+**`createSpacetimeDataPlane(conn)`** (`backend/db/repositories/data_plane.ts`) implements Matthew's `DataPlane` port:
 
-### `service_identity`
-`identity` (primary key), `role` (`GATEWAY` or `WORKER`), `label`, `created_at`. These are the brief's "configured gateway/worker identities".
-
-### `module_owner`
-`id` (always 0), `identity`. Recorded by `init` from the publishing identity.
-
-## 8. Reducers, views and the Node API
-
-Reducers are transactional and **return no data**. A call resolves on success and rejects with an error message on failure. Read results through the views.
-
-| Reducer (TS accessor) | Caller | Behavior |
-|---|---|---|
-| `configure_settings` (`configureSettings`) | owner | Creates or updates the company settings. USD only, and the company can't change once set. |
-| `register_service_identity` (`registerServiceIdentity`) | owner | Registers an identity as `GATEWAY` or `WORKER`. Idempotent. |
-| `store_document` (`storeDocument`) | gateway | Records v1 of a document whose bytes are already on the file store. Validates the company, type, media type, size, hash format and storage key. Same `uploadKey` with the same content: no-op. With different content: error. |
-| `store_document_version` (`storeDocumentVersion`) | gateway | Records v N+1, which inherits `type` and `referenceId` and sets `supersedesDocumentId`. Rejects the call if the previous document isn't the latest version or the content is identical. |
-
-| View | Returns |
+| Operation | Status |
 |---|---|
-| `documents_view` | All documents for the company, to registered gateway and worker identities only |
-| `settings_view` | The settings row, to registered identities only |
-| `my_service_identity` | The caller's own role (empty if unregistered), so services can check themselves at startup |
+| `imports.upload`, `imports.finalize` | Done |
+| `cases.list`, `cases.get`, `cases.startReview`, `cases.listJobs`, `cases.subscribe` | Done |
+| `worker.claim`, `worker.heartbeat`, `worker.complete` | Done. These require a `worker` context and a worker connection |
+| `evidence.list`, `evidence.readDocument`, `settings.get` | Done |
+| `questions.*`, `exceptions.resolve`, `proposals.*`, `reviews.*`, `exports.*`, `settings.configure` | `DATA_PLANE_UNAVAILABLE`; later phase |
 
-**The Node API (`backend/db/repositories/`)** is what the gateway and worker should use:
-
-```ts
-import { connectService } from './backend/db/repositories/client';
-import * as docs from './backend/db/repositories/documents';
-import { createSpacetimeDataPlane } from './backend/db/repositories/data_plane';
-
-const { conn } = await connectService('gateway');         // or 'worker' (read-only); fails fast if not bootstrapped
-const doc = await docs.uploadDocument(conn, { companyId, bytes, originalFilename, mediaType, type: 'INVOICE', referenceId, sourceLabel });
-const v2  = await docs.addDocumentVersion(conn, doc.id, { companyId, bytes: newBytes, originalFilename, mediaType, sourceLabel });
-docs.getDocument(conn, id);  docs.readDocument(conn, id);   // readDocument returns hash-verified bytes from the file store
-docs.listDocuments(conn, { type: 'TIMESHEET', referenceId, latestOnly: true });
-docs.getVersionHistory(conn, anyVersionId);  docs.findByContentHash(conn, hash);  docs.verifyDocument(conn, id);
-
-const dataPlane = createSpacetimeDataPlane(conn);          // for backend/control_plane handlers
-```
-
-| Control-plane operation | Status |
-|---|---|
-| `imports.upload` | Done |
-| `evidence.readDocument` | Done. A document whose `reference_id` is set must match `caseId` |
-| `settings.get` | Done |
-| All other operations | Return `DATA_PLANE_UNAVAILABLE` (503) until later phases |
-
-## 9. Repository layout (database parts)
+## 10. Repository layout
 
 ```text
-.env.example                                         environment template (§4)
-package.json                                         npm scripts (db:*, smoke, typecheck)
-scripts/db.mjs                                       publish / reset / generate / sql wrapper (env-driven)
-backend/db/spacetime/spacetimedb/src/schema.ts       private tables (§7)
-backend/db/spacetime/spacetimedb/src/index.ts        reducers + views (§8)
-backend/db/spacetime/CLAUDE.md                       SpacetimeDB TypeScript API reference for coding agents
-backend/db/bindings/                                 generated client bindings (views + reducers) — never edit by hand
-backend/db/repositories/client.ts                    connect / connectService / ownerToken / waitFor
-backend/db/repositories/file_store.ts                content-addressed file store (putFile / getFile)
-backend/db/repositories/documents.ts                 document API (§8)
-backend/db/repositories/data_plane.ts                DataPlane adapter for backend/control_plane
-backend/db/seed/bootstrap.ts                         owner setup: settings + service identities
-backend/db/seed/seed.ts, seed/documents/*            synthetic seed data
-backend/db/test/smoke.ts                             smoke test
-backend/control_plane/                               request validation + DataPlane port (Matthew; unchanged by this layer)
-data/files/                                          local file store (git-ignored)
-backend/.secrets/                                    gateway/worker tokens (git-ignored)
+scripts/db.mjs                                    publish / reset / generate / sql wrapper
+backend/db/spacetime/spacetimedb/src/
+  schema.ts                                       all private tables
+  auth.ts                                         caller + company checks, view filter
+  index.ts                                        settings, identities, documents (+ views); re-exports pipeline
+  pipeline.ts                                     cases, import, mailbox, jobs, sweep (+ views)
+backend/db/bindings/                              generated — never edit
+backend/db/repositories/
+  client.ts                                       connect / connectService('gateway'|'worker') / ownerToken / waitFor
+  file_store.ts  documents.ts                     file store + document API
+  parsers.ts  cases.ts  mailbox.ts  jobs.ts        import parsing, cases, mailbox, worker job API
+  data_plane.ts                                   DataPlane adapter for backend/control_plane
+backend/agents/tools/index.ts                     read-only agent tools + AGENT_TOOL_SPECS
+backend/db/seed/bootstrap.ts  seed.ts  documents/ owner setup, demo seed, synthetic files
+backend/db/test/smoke.ts                          24-check smoke test
+backend/control_plane/                            Matthew's validation + DataPlane port (unchanged)
 ```
 
-## 10. Troubleshooting
+## 11. Troubleshooting
 
-| Symptom | Cause and fix |
+| Symptom | Fix |
 |---|---|
-| `spacetime` is not recognized | PATH wasn't refreshed. Open a new terminal (§2), or set `SPACETIME_BIN`. |
-| `ECONNREFUSED 127.0.0.1:3000`, or the seed hangs on "Connecting…" | `spacetime start` isn't running, or `SPACETIMEDB_URI`/`SPACETIMEDB_DATABASE` is wrong. |
-| `… is not registered as GATEWAY; run npm run db:bootstrap` | Bootstrap hasn't run since the last publish or reset. Run `npm run db:bootstrap`. |
-| `Only the module owner may do this` during bootstrap | The CLI identity isn't the one that published, for example after `spacetime logout`. Use a new database name, or run `spacetime delete accrual-docs --server local` and publish again. |
-| `Settings are not configured` | Run `npm run db:bootstrap`. |
-| `File … is missing from the file store` | The metadata exists but `FILE_STORE_DIR` points somewhere else, or the files were deleted. The gateway and worker must share the same volume. |
-| Publish fails with a breaking-change error | `npm run db:reset`, then `db:bootstrap` and `db:seed`. |
-| TypeScript errors about missing reducers or views | Stale bindings. Run `npm run db:generate`. |
-| `backend/control_plane` tests fail on Node < 22.18 | Run `node --experimental-strip-types --test control_plane.test.mjs` from that folder. |
-| `npm` is blocked by the PowerShell execution policy | `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`, or run `npm.cmd`. |
-| Inspect server-side errors | `spacetime logs accrual-docs --server local -n 50`. `ERROR` lines after a smoke run are expected: they come from its deliberate rejection checks. |
+| `spacetime` is not recognized | Open a new terminal (§2), or set `SPACETIME_BIN` |
+| `ECONNREFUSED 127.0.0.1:3000`, or a hang on "Connecting…" | Start `spacetime start`; check `SPACETIMEDB_URI`/`SPACETIMEDB_DATABASE` |
+| `… is not registered as GATEWAY/WORKER` | `npm run db:bootstrap` (needed after every reset) |
+| `Only the module owner may do this` | The CLI identity isn't the publisher. Use a new database name, or `spacetime delete accrual-docs --server local` and publish again |
+| `File … is missing from the file store` | `FILE_STORE_DIR` differs between processes, or the files were deleted |
+| Breaking-change error on publish | `npm run db:reset`, then `db:generate`, `db:bootstrap`, `db:seed` |
+| TypeScript errors about reducers or views | `npm run db:generate` |
+| A job stuck in RUNNING | The worker died; the sweep requeues it once its lease expires (30s by default) |
+| `backend/control_plane` tests fail on Node < 22.18 | `node --experimental-strip-types --test control_plane.test.mjs` |
+| `npm` is blocked by the execution policy | `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`, or use `npm.cmd` |
+| Server-side errors | `spacetime logs accrual-docs --server local -n 50`. `ERROR` lines after a smoke run are expected: they come from its deliberate rejection checks |
 
-## 11. Adding later phases without breaking this contract
+## 12. Extending (later phases)
 
-- **Follow the brief's backend contract (p.4) for new reducers.** Examples: `finalize_import`, `start_review`, `claim_job`, `heartbeat_job`, `complete_job`, `ask_question`, `resolve_exception`, `build_proposal`, `decide_review`, `authorize_export` and `finalize_export`. Each one starts with a caller check (`GATEWAY` or `WORKER`) and a company check, like `store_document` does.
-- **Keep new tables private** and expose them through views filtered by `ctx.sender`, like `documents_view`. Index `companyId`, `caseId` and job status, as the brief requires.
-- **Don't change the §7 `documents` columns or the §8 reducer signatures.** Extend them instead. Facts, cases and so on should reference `documents.id`. The brief's "documents / facts" record puts `documentId, pageOrRow, excerpt, field, value, validationStatus` in a new `facts` table.
-- **Files:** export CSVs go to the same file store with `putFile` (brief p.2/p.4: "storageKey and hash"). Never store bytes in SpacetimeDB.
-- **The worker** connects with `connectService('worker')`. It reads `documents_view` plus the file store and is never allowed to call the document-writing or approval reducers.
-- **The control plane:** add a handler per operation in `data_plane.ts`, plus a smoke check. Don't edit `backend/control_plane/`; that's Matthew's code.
-- **After a module change,** run `db:publish` (or `db:reset` followed by `db:bootstrap`), then `db:generate`, `typecheck` and `smoke`, and commit the regenerated bindings.
-
-## 12. Checklist for a coding agent picking this up
-
-1. Run §0. Stop and report if `npm run smoke` isn't 14/14.
-2. Read the brief and `backend/db/spacetime/CLAUDE.md` before changing the module. Reducers are deterministic, return nothing, and must check `ctx.sender`.
-3. Keep tables private, read through views, and keep file bytes on the file store.
-4. Don't modify `backend/control_plane/`, the §7 columns, or the §8 reducer signatures.
-5. Keep all demo data synthetic and labeled `(SYNTHETIC)`.
+- **Follow the brief's backend contract (p.4).** Still to build: `build_proposal`, `ask_question`/`resolve_exception`, `decide_review` (gateway-only; the worker can never approve) and `authorize_export`/`finalize_export` (the CSV goes on the file store).
+- **Every new reducer** starts with a caller check and a company check (`auth.ts`). Every new table stays private behind a view filtered by `ctx.sender`.
+- **`build_proposal` reads from these tables:**
+  - `ACCEPTED` CODE facts, the typed evidence rows and `job_results`, for the current revision
+  - agent facts and allocations, which are `PROPOSED`, so the calculator or a validation step decides what to accept
+- **Changed inputs** (a new document version for a case) should bump `cases.input_revision`. Stale jobs are rejected automatically, because every worker call carries `expectedRevision`.
+- **Don't edit `backend/control_plane/`.** Add handlers in `data_plane.ts`, and add a smoke check for each one.
+- **After a module change,** run `db:publish` (or `db:reset` followed by `db:bootstrap`), then `db:generate`, `typecheck` and `smoke`, and commit the bindings.
