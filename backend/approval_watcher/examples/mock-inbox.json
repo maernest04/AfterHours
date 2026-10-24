@@ -1,0 +1,33 @@
+{
+  "mode": "MOCK",
+  "schema_version": 1,
+  "proposals": [{
+    "company_id": "demo", "case_id": 7, "case_revision": 3,
+    "proposal_id": 11, "version": 2, "policy_version": "policy-v1",
+    "content_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "request_token": "SYNTHETIC_REQUEST_TOKEN_0123456789",
+    "reviewers": ["reviewer@example.test"], "thread_id": "request-7-v2",
+    "issued_at": "2026-01-01T00:00:00+00:00", "expires_at": "2027-01-01T00:00:00+00:00",
+    "status": "PENDING"
+  }],
+  "cases": [{
+    "company_id": "demo", "case_id": 7, "case_revision": 3,
+    "proposal_id": 11, "proposal_version": 2, "policy_version": "policy-v1"
+  }],
+  "emails": [{
+    "message_id": "synthetic-question", "company_id": "demo",
+    "sender": "reviewer@example.test", "authenticated_sender": "reviewer@example.test",
+    "thread_id": "request-7-v2", "received_at": "2026-01-02T00:00:00+00:00",
+    "body": "QUESTION 11 v2 SYNTHETIC_REQUEST_TOKEN_0123456789\nWhat supports the changed hourly rate?"
+  }, {
+    "message_id": "synthetic-approval", "company_id": "demo",
+    "sender": "reviewer@example.test", "authenticated_sender": "reviewer@example.test",
+    "thread_id": "request-7-v2", "received_at": "2026-01-03T00:00:00+00:00",
+    "body": "APPROVE 11 v2 SYNTHETIC_REQUEST_TOKEN_0123456789"
+  }, {
+    "message_id": "synthetic-ambiguous", "company_id": "demo",
+    "sender": "reviewer@example.test", "authenticated_sender": "reviewer@example.test",
+    "thread_id": "request-7-v2", "received_at": "2026-01-04T00:00:00+00:00",
+    "body": "Approved, if legal confirms the amendment."
+  }]
+}

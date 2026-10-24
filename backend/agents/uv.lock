@@ -1,6 +1,23 @@
 version = 1
-revision = 5
+revision = 3
 requires-python = ">=3.12"
+
+[[package]]
+name = "afterhours-agents"
+version = "0.1.0"
+source = { editable = "." }
+dependencies = [
+    { name = "afterhours-db" },
+    { name = "droid-sdk" },
+    { name = "jsonschema" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "afterhours-db", editable = "../db" },
+    { name = "droid-sdk", specifier = "==0.5.0" },
+    { name = "jsonschema", specifier = ">=4.26,<5" },
+]
 
 [[package]]
 name = "afterhours-db"
@@ -19,23 +36,6 @@ requires-dist = [
     { name = "pypdf", specifier = ">=6,<7" },
     { name = "python-dotenv", specifier = ">=1.0,<2" },
     { name = "websockets", specifier = ">=15,<17" },
-]
-
-[[package]]
-name = "afterhours-investigation"
-version = "0.1.0"
-source = { editable = "." }
-dependencies = [
-    { name = "afterhours-db" },
-    { name = "droid-sdk" },
-    { name = "jsonschema" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "afterhours-db", editable = "../db" },
-    { name = "droid-sdk", specifier = "==0.5.0" },
-    { name = "jsonschema", specifier = ">=4.26,<5" },
 ]
 
 [[package]]

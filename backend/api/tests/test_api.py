@@ -24,8 +24,6 @@ class ReviewApiTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_remaining_operations_are_explicit_stubs(self):
         requests = [
-            ('/list-review', {}),
-            ('/list-review', {'limit': 10, 'cursor': 'page-2'}),
             ('/get-review', {'review_id': 'review-1'}),
             ('/get-review', {'review_id': 'review-1', 'live': 'true', 'after_sequence': '1'}),
             ('/export-review', {'review_id': 'review-1'}),
@@ -42,6 +40,7 @@ class ReviewApiTests(unittest.IsolatedAsyncioTestCase):
             ('/get-review', {'review_id': 'review-1', 'live': 'maybe'}),
             ('/get-review', {'review_id': 'review-1', 'after_sequence': '1'}),
             ('/list-review', {'limit': 0}), ('/list-review', {'limit': 11}),
+            ('/list-review', {'cursor': 'page-2'}),
             ('/export-review', {}), ('/export-review', {'review_id': ' '}),
         ]
         for path, params in requests:
@@ -82,8 +81,12 @@ class ReviewApiTests(unittest.IsolatedAsyncioTestCase):
                 content = responses[status]['content']['application/json']
                 self.assertIn('$ref', content['schema'])
                 self.assertIn('example', content)
-                self.assertIn('501', responses)
-                self.assertNotIn('success', responses['501']['description'].lower())
+                if path == '/list-review':
+                    self.assertIn('503', responses)
+                    self.assertNotIn('501', responses)
+                else:
+                    self.assertIn('501', responses)
+                    self.assertNotIn('success', responses['501']['description'].lower())
         live = document['paths']['/get-review']['get']['responses']['200']['content']['text/event-stream']
         self.assertIn('event: snapshot', live['example'])
         self.assertIn('event: review.updated', live['example'])

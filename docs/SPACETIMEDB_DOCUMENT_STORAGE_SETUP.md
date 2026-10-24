@@ -3,12 +3,13 @@
 The implemented data layer includes document storage, case import, evidence,
 the mock mailbox, leased jobs and read-only agent tools. Application tooling is
 Python; the schema/reducers/views remain a TypeScript SpacetimeDB module.
-The four public review API routes remain explicit 501 stubs.
+Review listing reads the database; create/get/export remain explicit 501 stubs.
 
-Factory Investigation, its leased worker and the gateway calculator/proposals
-are implemented; see the [handoff](../backend/agents/INVESTIGATION.md).
-EXTRACTION/MATCHING handlers, question delivery, approvals and exports remain to
-build. No model API keys are needed to seed or test the data layer.
+The [matching worker](../backend/agents/README.md) has a Factory adapter,
+validation and Docker/replay E2E setup. Investigation and gateway proposals are
+also implemented; see [their handoff](../backend/agents/INVESTIGATION.md).
+Extraction, question delivery, approvals and export remain separate work.
+No model keys are needed to seed or replay the matching flow.
 
 ## Quick start
 
@@ -174,13 +175,13 @@ The remaining API integration is:
 
 - `POST /create-review`: upload originals, derive trusted accrual metadata,
   `finalize_import`, then `start_review`; keep the import key stable on retry.
-- `GET /list-review`: read cases, apply API filters and cursor pagination in Python.
+- `GET /list-review`: implemented; reads cases with cursor pagination, default/maximum 10.
 - `GET /get-review`: combine case, current evidence and job/result history.
   A future live response must poll or add subscriptions; the SDK has no event feed.
-- `GET /export-review`: blocked on proposal, approval and export implementation.
+- `GET /export-review`: blocked on authoritative approval and CSV export integration.
 
-These are integration targets, not successful API behavior today. The four
-routes return 501; there is no working approval/export flow behind the UI.
+Only listing currently returns successful review data. Create/get/export return
+501; there is no authoritative approval/export flow behind the UI.
 
 ## Verification and troubleshooting
 

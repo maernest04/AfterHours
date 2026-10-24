@@ -12,15 +12,19 @@ company, hourly contractor services, USD. Exporting a CSV does not post an entry
 - Python SDK (`afterhours_db`): typed documents, authenticated queries/reducers,
   parsers, case/mailbox helpers, worker leases and read-only agent tools.
 - Factory Investigation worker and gateway calculator: source-linked rate
-  investigation, background heartbeats and immutable unapproved journal proposals.
-  See the [handoff](backend/agents/INVESTIGATION.md).
-- Python API: four runnable stubs with documented success contracts; valid
-  requests return **501 errors** until workflow integration is implemented.
-- Frontend: review-workspace implementation is being developed separately with
-  a simulated adapter while the public API is stubbed. See [frontend setup](frontend/README.md).
+  investigation and immutable unapproved journal proposals. See the [handoff](backend/agents/INVESTIGATION.md).
+- Matching worker: Python/Factory handler, output validation, leased polling,
+  synthetic fixture seeding and database-backed replay tests. See [agents](backend/agents/README.md).
+- Approval watcher: tested email decision evaluator and mock polling service;
+  authoritative mailbox/storage adapters remain pending. See [watcher setup](backend/approval_watcher/README.md).
+- Python API: database-backed paginated review listing; create/get/export keep
+  explicit **501 errors** until their full workflow contracts are implemented.
+- Frontend: React review workspace with a simulated adapter while full API
+  integration is pending. See [frontend setup](frontend/README.md).
 
-EXTRACTION/MATCHING handlers, authoritative human approval, journal CSV backend
-and public API orchestration remain to be implemented.
+Extraction, authoritative human approval, journal CSV export and full workflow
+API integration remain separate work. Live matching inference requires Factory
+credentials; replay tests need no model key.
 
 ## Runtime boundaries
 

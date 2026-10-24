@@ -7,6 +7,7 @@ import asyncio
 import json
 import os
 import re
+import sys
 import urllib.error
 import urllib.request
 
@@ -63,6 +64,9 @@ class BitdeerClient:
         self.retries = retries
         # json_schema (strict) is tried first; json_object is the automatic fallback.
         self.mode = mode or os.getenv('BITDEER_STRUCTURED_MODE') or 'json_schema'
+        # Hard stop on spend: total tokens (input + output, incl. hidden reasoning) per client/process.
+        self.token_budget = int(os.getenv('BITDEER_TOKEN_BUDGET') or 60000)
+        self.tokens_used = 0
         if not self.api_key:
             raise BitdeerError('BITDEER_API_KEY is not set; add it to the root .env')
         if not self.base_url.startswith('https://') and not self.base_url.startswith('http://localhost'):
@@ -89,7 +93,12 @@ class BitdeerClient:
                 'name': name, 'schema': wire_schema(schema), 'strict': True}}
         else:
             payload['response_format'] = {'type': 'json_object'}
+        if self.tokens_used >= self.token_budget:
+            raise BitdeerError(f'Bitdeer token budget exhausted ({self.tokens_used}/{self.token_budget}); raise BITDEER_TOKEN_BUDGET')
         body = self._post(payload)
+        usage = body.get('usage') or {}
+        self.tokens_used += int(usage.get('total_tokens') or 0)
+        print(f"[bitdeer] {self.model} in={usage.get('prompt_tokens')} out={usage.get('completion_tokens')} total_used={self.tokens_used}", file=sys.stderr)
         try:
             choice = body['choices'][0]
             content = choice['message']['content']

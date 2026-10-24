@@ -36,6 +36,10 @@ snippets. Check parties, covered work, authorized signatory, signature date,
 effective dates, superseded terms and conflicting amendments. An email alone,
 claimed timesheet rate, unsigned proposal or future rate is not approval.
 Do not choose between conflicting applicable documents without supporting evidence.
+A master agreement for hourly services requested by the company covers APPROVED timesheet work
+for that same vendor; do not ask whether the contract names an individual contractor or whether a
+project manager requested the work unless the contract limits scope or excludes it. Raise a
+question only for a real gap: missing, unsigned, unauthorized, conflicting or non-applicable terms.
 All claimed facts must quote an exact source excerpt and use line N or page N
 references in the document returned by readAttachment. Use integer-cent strings.
 For an applicable approved rate, propose rate.hourlyCents, rate.effectiveFrom,
