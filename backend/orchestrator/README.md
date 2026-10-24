@@ -2,7 +2,8 @@
 
 This Python service polls the existing SpacetimeDB workflow. It recovers accepted
 `IMPORTED` cases with `start_review`, then dispatches the merged EXTRACTION,
-MATCHING and INVESTIGATION workers. Database jobs, leases, revision checks and stage reducers
+MATCHING and INVESTIGATION workers, then runs the deterministic proposal calculator.
+Database jobs, leases, revision checks and stage reducers
 remain the only workflow state; there is no second queue or state store.
 
 Current boundaries are intentional:
@@ -14,8 +15,10 @@ Current boundaries are intentional:
 - Existing extracted fixtures can run MATCHING and, when questions remain,
   INVESTIGATION. Investigation reads the existing mock mailbox through scoped
   `AgentTools`; no real email integration or sending is enabled.
-- Resolved cases stop at the proposal handoff. The in-progress calculator is
-  never called by this service. Open questions remain `WAITING_FOR_INPUT`.
+- Resolved cases run the existing source-validated calculator and become
+  `READY_FOR_REVIEW`, or `VERIFIED_NO_CHANGE` when the adjustment is zero.
+  Open questions remain `WAITING_FOR_INPUT` and never calculate. Approval and
+  export are not triggered by this service.
 - Every completed model job retains `LIVE` or `REPLAYED` provenance. The service
   has no automatic replay or synthetic success fallback.
 
@@ -28,21 +31,50 @@ uv run --project backend/orchestrator afterhours-orchestrate
 ```
 
 The default process polls every two seconds, attempting at most ten queued
-worker jobs per cycle. A bounded, case-scoped invocation is:
+worker jobs and, separately, at most ten proposal calculations per cycle. A
+bounded, case-scoped invocation is:
 
 ```sh
 uv run --project backend/orchestrator afterhours-orchestrate --once --case-id 123 --max-jobs 2
 ```
 
 `--once` performs one import-recovery pass and at most `--max-jobs` worker
-attempts, then exits. Newly queued investigation jobs can run in the same cycle
-if the budget permits. It exits with status 1 when any attempt or poll fails;
-an unavailable extraction/proposal stage is reported as `blocked`, never as a
-completed job. `--case-id` scopes both import recovery and job dispatch.
+attempts, followed by at most `--max-jobs` proposal attempts, then exits. Newly
+queued investigation jobs can run in the same cycle if the worker budget permits.
+It exits with status 1 when any attempt or poll fails. Unconfigured extraction and
+failed calculation are reported as `blocked`, never as successful work.
+`--case-id` scopes import recovery, job dispatch, and calculation.
 
-The JSON report contains started case IDs, completed job summaries, errors by
-type, and blocked extraction/proposal handoffs. Exception payloads and model
-output are excluded from service logs.
+The JSON report contains started case IDs, completed job summaries,
+`completed_proposals` with persisted IDs, revisions, entry dates, exact integer-cent
+amounts and hashes, errors by type, and blocked stages. Exception payloads and
+model output are excluded from service logs.
+
+## Deterministic calculation
+
+The calculator runs only for `MATCHING` or `INVESTIGATING` cases whose current
+revision's jobs all succeeded, with no blockers and no current proposal. It uses
+the last calendar day of the review's posting period as the journal entry date
+(for example, `2026-09` becomes `2026-09-30`). This stays stable across retries;
+it does not use today's date or open a closed posting period automatically.
+
+The existing calculator reads current policy and validates source evidence,
+contractual rates, work, invoice coverage and ledger support. The database reducer
+checks the expected revision, policy, posting period, completed stages and proposal
+uniqueness before writing. Calculation remains deterministic; it adds no model call.
+
+Each poll also discovers cases that finished their agent stages before a process
+restart. Existing proposals are skipped, including after a successful commit whose
+response was lost. Calculator errors are isolated by case and reported as
+`CALCULATION`; the unchanged ready case is retried on a subsequent poll. Domain
+errors such as closed periods need their source/configuration issue resolved before
+retry can succeed. No approval, posting, export or terminal error state is invented.
+The persistent CLI rotates each bounded calculation pass after the previous
+attempted case, including failures, so later ready cases still get a turn. This
+in-memory cursor survives connection retries and resets safely on process restart;
+all eligibility and completion state still comes from the database. Callers that
+poll `run_cycle` directly can pass `report.last_calculation_case_id` back as
+`calculation_after_case_id`. Case-scoped runs always consider their selected case.
 
 Required database settings use the existing SDK conventions:
 
@@ -102,6 +134,7 @@ Provider injection runs the existing worker code and database transitions;
 it does not bypass leases or create an extraction implementation.
 
 Offline tests cover scoped import recovery, per-case error isolation, bounded
-dispatch, missing configuration, provider startup deadlines, shutdown and honest
-handoffs. The root integration smoke uses explicit replay fixtures against the
+dispatch, missing configuration, provider startup deadlines, shutdown, calculation
+eligibility, month-end dates, no-change outcomes, retry and resume idempotency.
+The root integration smoke uses explicit replay fixtures against the
 real local database; ordinary test runs never invoke paid inference.

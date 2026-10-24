@@ -1,7 +1,9 @@
 """Bounded queue dispatch; SpacetimeDB remains the sole workflow authority."""
 import asyncio
+from calendar import monthrange
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
+from datetime import date
 import os
 import threading
 
@@ -13,14 +15,17 @@ from afterhours_extraction.provider import bitdeer_session
 from afterhours_extraction.worker import run_job as run_extraction
 from afterhours_investigation.factory import factory_session
 from afterhours_investigation.worker import run_job as run_investigation
+from afterhours_investigation.calculator import build_proposal
 
 
 @dataclass
 class CycleReport:
     started_cases: list[int] = field(default_factory=list)
     completed_jobs: list[dict] = field(default_factory=list)
+    completed_proposals: list[dict] = field(default_factory=list)
     errors: list[dict] = field(default_factory=list)
     blocked: list[dict] = field(default_factory=list)
+    last_calculation_case_id: int | None = None
 
 
 def live_matching_provider():
@@ -83,15 +88,19 @@ def run_cycle(gateway_db, worker_db, *, case_id=None, max_jobs=10, stop=None,
               matching_provider_factory=live_matching_provider,
               investigation_session=live_investigation_session, investigation_model_run='LIVE',
               investigation_timeout=180, extraction_session=None, extraction_model_run='LIVE',
-              extraction_timeout=240):
+              extraction_timeout=240, calculation_after_case_id=None):
     """Recover imports, then attempt at most max_jobs ready jobs, scoped optionally.
 
     Providers can be injected for offline replay tests. The runtime defaults only
-    to LIVE providers; it never synthesizes extraction or proposal results. EXTRACTION
+    to LIVE providers; it never synthesizes agent results. EXTRACTION
     runs only when an extraction_session is passed (the CLI passes the live Bitdeer
     session when BITDEER_API_KEY is set); otherwise extraction jobs stay queued and are
     reported as blocked.
     Failed jobs retain their DB lease for the existing expiry/retry policy.
+    Ready cases run the deterministic calculator, up to max_jobs proposal attempts
+    in addition to the worker budget. Proposal entry dates use posting month-end.
+    Carry last_calculation_case_id into the next poll as calculation_after_case_id
+    to rotate bounded attempts past failing cases. This cursor stores no job state.
     """
     if max_jobs < 1 or (case_id is not None and case_id < 1):
         raise ValueError('max_jobs and case_id must be positive')
@@ -103,7 +112,7 @@ def run_cycle(gateway_db, worker_db, *, case_id=None, max_jobs=10, stop=None,
         raise ValueError('Extraction needs LIVE/REPLAYED provenance and a timeout of 1-600 seconds')
     roles = ['MATCHING', 'INVESTIGATION'] + (['EXTRACTION'] if extraction_session else [])
     stop = stop if stop is not None else threading.Event()
-    report = CycleReport()
+    report = CycleReport(last_calculation_case_id=calculation_after_case_id)
     if stop.is_set():
         return report
 
@@ -147,11 +156,38 @@ def run_cycle(gateway_db, worker_db, *, case_id=None, max_jobs=10, stop=None,
                                   'stage': job['role'], 'error': type(error).__name__})
 
     if not stop.is_set():
-        for case in list_cases(gateway_db):
+        calculation_attempts = 0
+        cases = list_cases(gateway_db)
+        if case_id is None and calculation_after_case_id is not None:
+            cases = ([case for case in cases if case['id'] > calculation_after_case_id]
+                     + [case for case in cases if case['id'] <= calculation_after_case_id])
+        for case in cases:
+            if stop.is_set():
+                break
             if case_id is not None and case['id'] != case_id:
                 continue
             if case['state'] == 'EXTRACTING' and not extraction_session:
                 report.blocked.append({'case_id': case['id'], 'stage': 'EXTRACTION'})
-            elif is_awaiting_proposal(gateway_db, case['id']):
-                report.blocked.append({'case_id': case['id'], 'stage': 'PROPOSAL'})
+            elif (case['state'] in {'MATCHING', 'INVESTIGATING'}
+                  and not case['blockers'] and case['current_proposal_id'] is None
+                  and calculation_attempts < max_jobs):
+                try:
+                    if not is_awaiting_proposal(gateway_db, case['id']):
+                        continue
+                    calculation_attempts += 1
+                    # Advance on failure as well as success, so a closed period or
+                    # invalid source cannot monopolize every bounded polling cycle.
+                    report.last_calculation_case_id = case['id']
+                    # Stable across retries and always inside the configured posting
+                    # period. Never substitute today's date or silently open periods.
+                    period = date.fromisoformat(case['posting_period'] + '-01')
+                    entry_date = period.replace(day=monthrange(period.year, period.month)[1]).isoformat()
+                    proposal = build_proposal(gateway_db, case['id'], case['input_revision'], entry_date=entry_date)
+                    report.completed_proposals.append(proposal)
+                except Exception as error:
+                    # Reducer/source validation failures stay visible and retryable;
+                    # do not fabricate an approval, export or successful proposal.
+                    report.errors.append({'case_id': case['id'], 'stage': 'CALCULATION',
+                                          'error': type(error).__name__})
+                    report.blocked.append({'case_id': case['id'], 'stage': 'CALCULATION'})
     return report

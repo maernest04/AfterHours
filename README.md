@@ -20,12 +20,12 @@ company, hourly contractor services, USD. Exporting a CSV does not post an entry
 - Python API: structured file imports, database-backed paginated listing and
   review details/live snapshots. Approved CSV export remains an explicit **501**.
 - Pipeline: Python dispatcher starts accepted imports and runs Bitdeer extraction,
-  Factory matching and investigation through the database queue. Automatic
-  calculation is not enabled. See [pipeline setup](backend/orchestrator/README.md).
+  Factory matching and investigation through the database queue, followed by
+  deterministic calculation. See [pipeline setup](backend/orchestrator/README.md).
 - Frontend: React review workspace with a simulated adapter while full API
   integration is pending. See [frontend setup](frontend/README.md).
 
-Automatic calculation, persisted mock approval decisions, journal CSV export and
+Persisted mock approval decisions, journal CSV export and
 frontend API integration remain separate work. Live agent inference requires Bitdeer and Factory
 credentials; replay tests need no model key.
 
@@ -75,8 +75,8 @@ Start the ready pipeline stages with `docker compose --profile pipeline up --bui
 This processes all configured extraction/matching/investigation jobs and uses provider credits.
 For a scoped run, use `docker compose --profile pipeline run --rm pipeline afterhours-orchestrate --once --case-id N`.
 Fresh uploads run extraction when `BITDEER_API_KEY` is configured; otherwise they
-wait in its queue. No fixture result is substituted. The calculator is available separately but is
-not automatically scheduled while its integration is still in progress.
+wait in its queue. No fixture result is substituted. Resolved cases automatically
+run the source-validated calculator with an entry date at posting month-end.
 Full setup, environment overrides and persistence details:
 [database handoff](docs/SPACETIMEDB_DOCUMENT_STORAGE_SETUP.md).
 
@@ -123,16 +123,20 @@ The implemented database flow is:
 
 ```text
 upload → finalize import → IMPORTED → EXTRACTING → MATCHING
-              │                                      │
-              └─ missing/invalid input                ├─ unresolved evidence → INVESTIGATING
-                 → WAITING_FOR_INPUT                  │                         │
-                                                      └─ awaiting proposal ◄────┘
+                                                     │
+                                                     ├─ questions → INVESTIGATING
+                                                     │                ├─ unresolved → WAITING_FOR_INPUT
+                                                     │                └─ resolved ─┐
+                                                     └─ resolved ──────────────────┤
+                                                                                   ▼
+                                                         deterministic calculation
+                                                         READY_FOR_REVIEW / VERIFIED_NO_CHANGE
 ```
 
 Structured CSV/JSON is parsed by code. Models propose facts and matches through
 leased jobs; reducers enforce scope and revision checks. Expired jobs are
 requeued by a scheduled sweep; exhausted retries surface `RETRYABLE_ERROR`.
-The separately invoked gateway calculator saves a proposal and sets
+The pipeline invokes the gateway calculator, saves an unapproved proposal and sets
 `READY_FOR_REVIEW` or `VERIFIED_NO_CHANGE`. Persisted mock approval and export
 remain to build.
 
@@ -184,7 +188,7 @@ AFTERHOURS_FLOW_TESTS=1 AFTERHOURS_API_URL=http://127.0.0.1:8001 \
 
 For the host command, run the API container first with the same local database/file store.
 The flow checks upload, queued extraction, the real extraction worker with replayed decisions, matching,
-mock-mail investigation, proposal handoff, HTTP details and SSE. It does not
+mock-mail investigation, persisted calculation, HTTP details and SSE. It does not
 claim approval/export E2E coverage. Test records are synthetic and remain local.
 The Docker suite also checks investigation SDK startup with fake credentials and
 no prompt. The pipeline uses writable temporary SDK storage inside its read-only
@@ -199,13 +203,12 @@ API_PORT=8001 docker compose -f compose.yaml -f backend/orchestrator/compose.tes
 This imports one fresh synthetic review, runs Bitdeer extraction and Factory
 matching/investigation, and requires all three persisted results to be `LIVE`.
 The signed amendment is available only in the mock mailbox. The test checks API
-details/SSE and stops at the calculator handoff; it never approves or posts.
+details/SSE and the calculated $7,700 target/$700 adjustment; it never approves or posts.
 It fails if provider configuration is missing instead of substituting replay.
 
-On 2026-10-24, the live flow reached the proposal handoff with all three stages
-stored as `LIVE`, all ten approved work items matched, and the mock-mail amendment
-visible through HTTP detail and SSE. One extraction lease expired; a scoped retry
-completed the case. A separate incomplete-authority fixture correctly remained
-`WAITING_FOR_INPUT`. The success fixture explicitly establishes the project
-manager's authorization; neither test bypasses contractual scope checks.
+On 2026-10-24, the [ten-scenario suite](backend/tests/README.md) passed with live
+Bitdeer/Factory calls in a separate local database. Eight cases produced the expected
+calculation; unsigned and conflicting amendments stayed `WAITING_FOR_INPUT` without
+a proposal. All jobs completed on their first attempt. API/SSE, pagination and
+idempotent resume were verified. Approval and CSV export remain outside that coverage.
 Frontend build and test commands are in [frontend/README.md](frontend/README.md).

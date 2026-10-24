@@ -36,7 +36,8 @@ class Database:
 
 
 def case(case_id, state='IMPORTED'):
-    return dict(id=case_id, state=state, input_revision=1)
+    return dict(id=case_id, state=state, input_revision=1, blockers=[],
+                posting_period='2026-09', current_proposal_id=None)
 
 
 def job(job_id, case_id, role, status='QUEUED'):
@@ -78,7 +79,7 @@ class CycleTests(unittest.TestCase):
         self.assertEqual(result.completed_jobs, [])
         self.assertEqual(len(result.errors), 1)
 
-    def test_bounded_drain_continues_to_investigation_and_stops_before_calculator(self):
+    def test_bounded_drain_continues_to_investigation_then_calculates(self):
         db = Database([case(1, 'MATCHING'), case(2, 'MATCHING')],
                       [job(1, 1, 'MATCHING'), job(2, 2, 'MATCHING')])
 
@@ -100,7 +101,9 @@ class CycleTests(unittest.TestCase):
 
         with patch('afterhours_orchestrator.pipeline.run_matching', side_effect=matching), \
              patch('afterhours_orchestrator.pipeline.run_investigation', side_effect=investigation), \
-             patch('afterhours_orchestrator.pipeline.claim_job', side_effect=lambda db, jid, *_: jid):
+             patch('afterhours_orchestrator.pipeline.claim_job', side_effect=lambda db, jid, *_: jid), \
+             patch('afterhours_orchestrator.pipeline.build_proposal',
+                   return_value={'id': 7, 'case_id': 1, 'adjustment_cents': '10000'}):
             first = run_cycle(db, db, case_id=1, max_jobs=1,
                               matching_provider_factory=object, investigation_session=session,
                               investigation_model_run='REPLAYED')
@@ -110,8 +113,133 @@ class CycleTests(unittest.TestCase):
                                matching_provider_factory=object, investigation_session=session,
                                investigation_model_run='REPLAYED')
         self.assertEqual([j['id'] for j in second.completed_jobs], [3])
-        self.assertEqual(second.blocked, [{'case_id': 1, 'stage': 'PROPOSAL'}])
+        self.assertEqual(second.blocked, [])
+        self.assertEqual(second.completed_proposals, [{'id': 7, 'case_id': 1, 'adjustment_cents': '10000'}])
         self.assertEqual(db.jobs[1]['status'], 'QUEUED')
+
+    def test_calculation_recovers_ready_cases_and_respects_case_scope(self):
+        db = Database([case(1, 'MATCHING'), case(2, 'MATCHING')],
+                      [job(1, 1, 'MATCHING', 'SUCCEEDED'), job(2, 2, 'MATCHING', 'SUCCEEDED')])
+        db.cases[1]['posting_period'] = '2024-02'
+        db.cases[1]['input_revision'] = 3
+        db.jobs[1]['case_revision'] = 3
+        calls = []
+
+        def calculate(db, case_id, revision, *, entry_date):
+            calls.append((case_id, revision, entry_date))
+            db.cases[1].update(state='READY_FOR_REVIEW', current_proposal_id=7)
+            return {'id': 7, 'case_id': case_id, 'input_revision': revision}
+
+        with patch('afterhours_orchestrator.pipeline.build_proposal', side_effect=calculate):
+            first = run_cycle(db, db, case_id=2)
+            second = run_cycle(db, db, case_id=2)
+        self.assertEqual(calls, [(2, 3, '2024-02-29')])
+        self.assertEqual(first.completed_proposals, [{'id': 7, 'case_id': 2, 'input_revision': 3}])
+        self.assertEqual(second.completed_proposals, [])
+        self.assertEqual(db.cases[0]['state'], 'MATCHING')
+
+    def test_no_change_result_is_not_rebuilt_on_resume(self):
+        db = Database([case(1, 'INVESTIGATING')], [job(1, 1, 'INVESTIGATION', 'SUCCEEDED')])
+
+        def calculate(db, case_id, revision, *, entry_date):
+            db.cases[0].update(state='VERIFIED_NO_CHANGE', current_proposal_id=8)
+            return {'id': 8, 'case_id': case_id, 'adjustment_cents': '0', 'journal_lines': []}
+
+        with patch('afterhours_orchestrator.pipeline.build_proposal', side_effect=calculate):
+            first = run_cycle(db, db)
+            second = run_cycle(db, db)
+        self.assertEqual(first.completed_proposals[0]['adjustment_cents'], '0')
+        self.assertEqual(second.completed_proposals, [])
+        self.assertEqual(db.cases[0]['state'], 'VERIFIED_NO_CHANGE')
+
+    def test_calculation_skips_blocked_incomplete_and_existing_proposal_cases(self):
+        states = ['WAITING_FOR_INPUT', 'MATCHING', 'MATCHING', 'MATCHING', 'MATCHING']
+        db = Database([case(i, state) for i, state in enumerate(states, 1)],
+                      [job(i, i, 'MATCHING', 'SUCCEEDED') for i in range(1, 6)])
+        db.cases[1]['blockers'] = ['Missing amendment']
+        db.jobs[2]['status'] = 'RUNNING'
+        db.cases[3]['current_proposal_id'] = 9
+        db.jobs[4]['case_revision'] = 0
+        with patch('afterhours_orchestrator.pipeline.build_proposal',
+                   side_effect=AssertionError('Ineligible case must not calculate')):
+            report = run_cycle(db, db)
+        self.assertEqual(report.completed_proposals, [])
+        self.assertEqual(report.errors, [])
+
+    def test_calculator_error_is_isolated_and_retried_on_next_poll(self):
+        db = Database([case(1, 'MATCHING'), case(2, 'MATCHING')],
+                      [job(1, 1, 'MATCHING', 'SUCCEEDED'), job(2, 2, 'MATCHING', 'SUCCEEDED')])
+        attempts = []
+
+        def calculate(db, case_id, revision, *, entry_date):
+            attempts.append(case_id)
+            if attempts == [1]:
+                raise RuntimeError('private provider/storage detail')
+            db.cases[case_id - 1].update(state='READY_FOR_REVIEW', current_proposal_id=case_id)
+            return {'id': case_id, 'case_id': case_id}
+
+        with patch('afterhours_orchestrator.pipeline.build_proposal', side_effect=calculate):
+            first = run_cycle(db, db)
+            second = run_cycle(db, db)
+        self.assertEqual(first.errors, [{'case_id': 1, 'stage': 'CALCULATION', 'error': 'RuntimeError'}])
+        self.assertEqual(first.blocked, [{'case_id': 1, 'stage': 'CALCULATION'}])
+        self.assertEqual(first.completed_proposals, [{'id': 2, 'case_id': 2}])
+        self.assertEqual(second.completed_proposals, [{'id': 1, 'case_id': 1}])
+        self.assertEqual(attempts, [1, 2, 1])
+
+    def test_committed_proposal_with_lost_response_is_not_rebuilt(self):
+        db = Database([case(1, 'MATCHING')], [job(1, 1, 'MATCHING', 'SUCCEEDED')])
+
+        def calculate(db, case_id, revision, *, entry_date):
+            db.cases[0].update(state='READY_FOR_REVIEW', current_proposal_id=7)
+            raise RuntimeError('response lost after commit')
+
+        with patch('afterhours_orchestrator.pipeline.build_proposal', side_effect=calculate):
+            first = run_cycle(db, db)
+            second = run_cycle(db, db)
+        self.assertEqual(len(first.errors), 1)
+        self.assertEqual(first.completed_proposals, [])
+        self.assertEqual(second.errors, [])
+        self.assertEqual(second.completed_proposals, [])
+
+    def test_calculation_attempts_are_bounded_even_when_each_fails(self):
+        db = Database([case(1, 'MATCHING'), case(2, 'MATCHING')],
+                      [job(1, 1, 'MATCHING', 'SUCCEEDED'), job(2, 2, 'MATCHING', 'SUCCEEDED')])
+        with patch('afterhours_orchestrator.pipeline.build_proposal', side_effect=ValueError('closed period')):
+            report = run_cycle(db, db, max_jobs=1)
+        self.assertEqual(report.errors, [{'case_id': 1, 'stage': 'CALCULATION', 'error': 'ValueError'}])
+
+    def test_calculation_cursor_advances_past_failures_and_wraps_without_starvation(self):
+        db = Database([case(i, 'MATCHING') for i in range(1, 4)],
+                      [job(i, i, 'MATCHING', 'SUCCEEDED') for i in range(1, 4)])
+        attempts = []
+
+        def calculate(db, case_id, revision, *, entry_date):
+            attempts.append(case_id)
+            if case_id < 3:
+                raise ValueError('Closed posting period')
+            db.cases[2].update(state='READY_FOR_REVIEW', current_proposal_id=7)
+            return {'id': 7, 'case_id': 3}
+
+        with patch('afterhours_orchestrator.pipeline.build_proposal', side_effect=calculate):
+            first = run_cycle(db, db, max_jobs=2)
+            second = run_cycle(db, db, max_jobs=2,
+                               calculation_after_case_id=first.last_calculation_case_id)
+        self.assertEqual(first.last_calculation_case_id, 2)
+        self.assertEqual(first.completed_proposals, [])
+        self.assertEqual(second.completed_proposals, [{'id': 7, 'case_id': 3}])
+        self.assertEqual(attempts, [1, 2, 3, 1])
+        self.assertEqual(second.last_calculation_case_id, 1)
+
+    def test_calculation_cursor_preserves_case_scope_and_survives_empty_poll(self):
+        db = Database([case(1, 'MATCHING'), case(2, 'MATCHING')],
+                      [job(1, 1, 'MATCHING', 'SUCCEEDED'), job(2, 2, 'MATCHING', 'SUCCEEDED')])
+        with patch('afterhours_orchestrator.pipeline.build_proposal',
+                   return_value={'id': 7, 'case_id': 1}):
+            scoped = run_cycle(db, db, case_id=1, calculation_after_case_id=1)
+        self.assertEqual(scoped.completed_proposals, [{'id': 7, 'case_id': 1}])
+        empty = run_cycle(Database([]), Database([]), calculation_after_case_id=5)
+        self.assertEqual(empty.last_calculation_case_id, 5)
 
     def test_extraction_runs_only_with_a_session_or_bitdeer_key_and_feeds_matching(self):
         db = Database([case(1)])

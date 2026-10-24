@@ -14,7 +14,7 @@ from test_review_flow import SEED
 
 @unittest.skipUnless(os.getenv('AFTERHOURS_LIVE_FLOW') == '1', 'Opt-in paid provider flow')
 class LiveReviewFlowTests(unittest.TestCase):
-    def test_upload_through_all_live_agents_to_proposal_handoff(self):
+    def test_upload_through_all_live_agents_and_calculation(self):
         from afterhours_db import AfterHoursDB
         from afterhours_db.cases import is_awaiting_proposal, list_jobs
         from afterhours_db.mailbox import store_email
@@ -68,17 +68,18 @@ class LiveReviewFlowTests(unittest.TestCase):
                 self.assertTrue(any(f['documentId'] == str(amendment.id) and f['field'] == 'rate.hourlyCents'
                                     and f['value'] == '11000' for f in evidence['facts']))
                 self.assertEqual(len(evidence['allocations']), len(evidence['workItems']))
-                self.assertTrue(is_awaiting_proposal(gateway, case_id))
-                self.assertIn({'case_id': case_id, 'stage': 'PROPOSAL'}, report.blocked)
+                self.assertFalse(is_awaiting_proposal(gateway, case_id))
+                self.assertEqual(len(report.completed_proposals), 1)
 
             params = {'review_id': str(case_id)}
             response = client.get('/get-review', params=params)
             self.assertEqual(response.status_code, 200, response.text)
             snapshot = response.json()
-            self.assertEqual(snapshot['status'], 'INVESTIGATING')
+            self.assertEqual(snapshot['status'], 'READY_FOR_REVIEW')
             self.assertEqual(snapshot['original_amount_cents'], '700000')
-            self.assertIsNone(snapshot['proposal_id'])
-            self.assertIsNone(snapshot['corrected_target_cents'])
+            self.assertIsNotNone(snapshot['proposal_id'])
+            self.assertEqual(snapshot['corrected_target_cents'], '770000')
+            self.assertEqual(snapshot['difference_cents'], '70000')
             self.assertEqual(snapshot['history'], [])
             self.assertTrue(any(e['document_id'] == str(amendment.id) for e in snapshot['evidence']))
             with client.stream('GET', '/get-review', params={**params, 'live': 'true'}) as stream:
@@ -86,7 +87,7 @@ class LiveReviewFlowTests(unittest.TestCase):
                 data = next(line[6:] for line in stream.iter_lines() if line.startswith('data: '))
                 self.assertEqual(json.loads(data)['sequence'], snapshot['sequence'])
             self.assertEqual(client.get('/export-review', params=params).status_code, 501)
-            print(f'LIVE E2E verified case {case_id}: extraction, matching, investigation; proposal handoff.', flush=True)
+            print(f'LIVE E2E verified case {case_id}: extraction, matching, investigation, persisted calculation.', flush=True)
 
 
 if __name__ == '__main__':

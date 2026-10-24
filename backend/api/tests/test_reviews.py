@@ -35,10 +35,19 @@ class MemoryClient:
         self.closed += 1
 
     def query(self, sql):
-        table = sql.removeprefix('SELECT * FROM ').removesuffix('_view')
+        source, _, where = sql.removeprefix('SELECT * FROM ').partition(' WHERE ')
+        table = source.removesuffix('_view')
         if table == 'settings':
             return [{'currency': 'USD'}]
-        return copy.deepcopy(self.tables[table])
+        rows = self.tables[table]
+        if where.startswith('id = '):
+            rows = [row for row in rows if row['id'] == int(where.removeprefix('id = '))]
+        elif where.startswith("upload_key = '") and where.endswith("'"):
+            key = where[len("upload_key = '"):-1].replace("''", "'")
+            rows = [row for row in rows if row['upload_key'] == key]
+        elif where:
+            raise AssertionError(f'Unsupported test query: {sql}')
+        return copy.deepcopy(rows)
 
     def call_reducer(self, name, args):
         if name == 'store_document':

@@ -15,6 +15,43 @@ class MatchingTests(unittest.TestCase):
         result = self.validate(valid_output())
         self.assertEqual(result['proposedMatches'][0]['workItemId'], '30')
 
+    def test_partial_invoice_link_leaves_minute_allocation_to_calculator(self):
+        from afterhours_investigation.calculator import _coverage
+
+        context = evidence_fixture()
+        context['workItems'][0]['approvedMinutes'] = 600
+        context['invoiceLines'][0].update(minutes=240, postedDate='2026-09-10')
+        result = self.validate(valid_output(), context)
+        context['allocations'] = result['proposedMatches']
+        self.assertEqual(_coverage(context), [[40, 30, 240]])
+
+    def test_shared_invoice_links_do_not_count_each_work_item_in_full(self):
+        from afterhours_investigation.calculator import _coverage
+
+        context = evidence_fixture()
+        context['invoiceLines'][0].update(minutes=240, serviceEnd='2026-09-11', postedDate='2026-09-12')
+        context['workItems'].append({**context['workItems'][0], 'id': '31', 'factId': '23',
+                                     'serviceDate': '2026-09-11'})
+        context['facts'].append({'id': '23', 'documentId': '11', 'validationStatus': 'ACCEPTED'})
+        context['allowedEvidenceIds'].append('fact:23')
+        output = valid_output()
+        output['proposedMatches'].append({**deepcopy(output['proposedMatches'][0]),
+                                         'workItemId': '31',
+                                         'evidenceIds': ['doc:10', 'fact:23', 'fact:21', 'fact:22']})
+        output['evidenceIds'].append('fact:23')
+        result = self.validate(output, context)
+        context['allocations'] = result['proposedMatches']
+        self.assertEqual(sum(row[2] for row in _coverage(context)), 240)
+
+    def test_calculator_still_rejects_invoice_minutes_exceeding_linked_work(self):
+        from afterhours_investigation.calculator import _coverage
+
+        context = evidence_fixture()
+        context['invoiceLines'][0].update(minutes=600, postedDate='2026-09-10')
+        context['allocations'] = self.validate(valid_output(), context)['proposedMatches']
+        with self.assertRaisesRegex(ValueError, 'coverage'):
+            _coverage(context)
+
     def test_rejects_invalid_ids_duplicate_work_missing_citations_and_extra_fields(self):
         for mutation in ('invented', 'duplicate', 'uncited', 'extra', 'fact', 'blank_summary', 'blank_question'):
             output = valid_output()
@@ -32,7 +69,7 @@ class MatchingTests(unittest.TestCase):
 
     def test_rejects_semantically_unrelated_invoice_and_ledger(self):
         for field, value, collection in [('contractor', 'Other', 'invoiceLines'),
-            ('serviceStart', '2026-10-01', 'invoiceLines'), ('minutes', 60, 'invoiceLines'),
+            ('serviceStart', '2026-10-01', 'invoiceLines'),
             ('vendorId', 'Other', 'ledgerRecords'), ('period', '2026-08', 'ledgerRecords')]:
             context = evidence_fixture()
             context[collection][0][field] = value

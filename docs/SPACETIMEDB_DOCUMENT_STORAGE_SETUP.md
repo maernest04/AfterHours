@@ -3,12 +3,13 @@
 The implemented data layer includes document storage, case import, evidence,
 the mock mailbox, leased jobs and read-only agent tools. Application tooling is
 Python; the schema/reducers/views remain a TypeScript SpacetimeDB module.
-Review listing reads the database; create/get/export remain explicit 501 stubs.
+Create/list/get review read and write the database; CSV export remains an explicit 501 stub.
 
 The [matching worker](../backend/agents/README.md) has a Factory adapter,
 validation and Docker/replay E2E setup. Investigation and gateway proposals are
 also implemented; see [their handoff](../backend/agents/INVESTIGATION.md).
-Extraction, question delivery, approvals and export remain separate work.
+Extraction and automatic calculation are connected through the Python orchestrator.
+Question delivery, persisted approvals and export remain separate work.
 No model keys are needed to seed or replay the matching flow.
 
 ## Quick start
@@ -171,17 +172,18 @@ use synchronous handlers or `asyncio.to_thread` in async services. Do not
 blindly retry an interrupted write because it may have committed.
 
 The frontend calls the Python API, never SpacetimeDB with service credentials.
-The remaining API integration is:
+The API integration is:
 
 - `POST /create-review`: upload originals, derive trusted accrual metadata,
-  `finalize_import`, then `start_review`; keep the import key stable on retry.
+  and `finalize_import`; the dispatcher recovers accepted imports with `start_review`.
+  The data plane generates and returns the persisted import key.
 - `GET /list-review`: implemented; reads cases with cursor pagination, default/maximum 10.
-- `GET /get-review`: combine case, current evidence and job/result history.
-  A future live response must poll or add subscriptions; the SDK has no event feed.
+- `GET /get-review`: current case, proposal, evidence and blockers; `live=true`
+  supplies polling SSE snapshots. Approval history stays empty until persisted.
 - `GET /export-review`: blocked on authoritative approval and CSV export integration.
 
-Only listing currently returns successful review data. Create/get/export return
-501; there is no authoritative approval/export flow behind the UI.
+Create/list/get return successful review data. Only export returns 501;
+there is no authoritative approval/export flow behind the UI.
 
 ## Verification and troubleshooting
 

@@ -46,6 +46,23 @@ def documents(text=AMENDMENT):
 
 
 class HandlerTests(unittest.IsolatedAsyncioTestCase):
+    async def test_denied_attachment_cannot_be_used_as_resolved_evidence(self):
+        tools = Mock()
+        tools.read_attachment.side_effect = ToolScopeError('Sensitive rejected source detail')
+        decide = AsyncMock(side_effect=[
+            {'tool': 'readAttachment', 'arguments': {'documentId': '2'}},
+            {'tool': 'finish', 'output': amendment_output()}])
+        with self.assertRaisesRegex(ValueError, 'read, cited'):
+            await investigate(snapshot(), tools, decide)
+        self.assertNotIn('Sensitive rejected source detail', decide.call_args_list[1].args[0])
+
+    async def test_transport_failure_does_not_become_missing_evidence(self):
+        tools = Mock()
+        tools.read_email_thread.side_effect = RuntimeError('database unavailable')
+        decide = AsyncMock(return_value={'tool': 'readEmailThread', 'arguments': {'threadId': '1'}})
+        with self.assertRaisesRegex(RuntimeError, 'database unavailable'):
+            await investigate(snapshot(), tools, decide)
+
     async def test_unavailable_thread_can_finish_unresolved_without_reading_evidence(self):
         tools = Mock()
         tools.read_email_thread.side_effect = ToolScopeError('Outside case')

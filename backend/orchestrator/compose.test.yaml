@@ -1,6 +1,31 @@
 # Combine with root compose.yaml; paths resolve relative to the repository root.
 # Stop independent pipeline/matching/host workers first: tests share the local DB.
 services:
+  scenario-api:
+    extends:
+      file: compose.yaml
+      service: api
+    profiles: ["live-scenarios"]
+    environment:
+      SPACETIMEDB_DATABASE: ${AFTERHOURS_SCENARIO_DATABASE:-accrual-docs-e2e}
+    ports: !override ["127.0.0.1:${AFTERHOURS_SCENARIO_API_PORT:-8002}:8000"]
+
+  pipeline-scenario-tests:
+    extends:
+      service: pipeline-live-tests
+    profiles: !override ["live-scenarios"]
+    environment:
+      SPACETIMEDB_DATABASE: ${AFTERHOURS_SCENARIO_DATABASE:-accrual-docs-e2e}
+      AFTERHOURS_API_URL: http://scenario-api:8000
+      AFTERHOURS_LIVE_SCENARIOS: "1"
+    depends_on: !override
+      scenario-api:
+        condition: service_started
+      spacetimedb:
+        condition: service_healthy
+    tmpfs: !override ["/tmp"]
+    command: ["python", "-m", "unittest", "discover", "-s", "backend/tests", "-p", "test_review_scenarios_live.py", "-v"]
+
   pipeline-live-tests:
     extends:
       service: pipeline-tests

@@ -32,6 +32,11 @@ Omit links when the governing identity or coverage is actually ambiguous or unsu
 Link invoice lines only for the same contractor and overlapping service dates. Distinguish
 POSTED from UNPOSTED: a received invoice is evidence, not proof of a posted expense.
 Do not arbitrarily choose between competing invoice lines or over-allocate invoice minutes.
+Invoice links identify candidate coverage; they do not allocate all of a work item's minutes.
+A posted invoice can cover only part of an approved work item, with the remainder unbilled.
+Retain a supported partial-invoice link even when the work minutes exceed invoice minutes.
+The downstream calculator allocates exact minutes across those links and rejects missing
+coverage or double counting. Matching must still flag competing invoice identities.
 Uninvoiced approved work is valid accrual evidence: an empty invoiceLineIds is allowed.
 PENDING/REJECTED timesheet rows are deliberately excluded from workItems. Ignore them;
 do not ask whether they might become approved later. Likewise UNPOSTED invoices and
@@ -112,7 +117,6 @@ def validate_output(output: dict, context: dict) -> dict:
     invoices = {r['id']: r for r in context['invoiceLines']}
     ledger = {r['id']: r for r in context['ledgerRecords']}
     matched = set()
-    invoice_minutes = {}
     case = context['case']
     for match in output['proposedMatches']:
         work_id, contract_id = match['workItemId'], match['contractId']
@@ -139,9 +143,6 @@ def validate_output(output: dict, context: dict) -> dict:
                 if field == 'invoiceLineIds':
                     if row not in eligible:
                         raise ValueError('Invoice contractor or service dates do not match')
-                    invoice_minutes[id] = invoice_minutes.get(id, 0) + work['approvedMinutes']
-                    if invoice_minutes[id] > row['minutes']:
-                        raise ValueError('Matched work exceeds invoice minutes')
                 elif row['vendorId'] != case['vendorId'] or row['period'] != case['postingPeriod']:
                     raise ValueError('Ledger vendor or posting period does not match')
         citations(match['evidenceIds'])
