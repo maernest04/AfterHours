@@ -31,7 +31,7 @@ const settings = table(
   }
 );
 
-/** Private. Configured server identities: GATEWAY (Next.js server) and WORKER (Node agent worker). */
+/** Private. Configured server identities: GATEWAY (Python API) and WORKER (Python agent worker). */
 const serviceIdentity = table(
   { name: 'service_identity' },
   {

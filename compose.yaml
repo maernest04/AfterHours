@@ -4,3 +4,21 @@ services:
     ports:
       - "127.0.0.1:${API_PORT:-8000}:8000"
     init: true
+
+  spacetimedb:
+    image: clockworklabs/spacetime:v2.13.0
+    command: ["start", "--listen-addr", "0.0.0.0:3000"]
+    ports:
+      - "127.0.0.1:${SPACETIMEDB_PORT:-3000}:3000"
+    volumes:
+      - spacetimedb-data:/home/spacetime
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:3000/v1/ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 10s
+    restart: unless-stopped
+
+volumes:
+  spacetimedb-data:

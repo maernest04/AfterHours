@@ -18,12 +18,12 @@ function requireRole(ctx: Ctx, role: 'GATEWAY' | 'WORKER') {
   }
 }
 
-/** Next.js server gateway: imports, case actions, mailbox seeding. */
+/** Python API gateway: imports, case actions, mailbox seeding. */
 export function requireGateway(ctx: Ctx) {
   requireRole(ctx, 'GATEWAY');
 }
 
-/** Node agent worker: job claims, heartbeats and completions only. */
+/** Python agent worker: job claims, heartbeats and completions only. */
 export function requireWorker(ctx: Ctx) {
   requireRole(ctx, 'WORKER');
 }

@@ -1,49 +1,54 @@
 # Orchestrator
 
-Own workflow execution from submission through completion, failure, or
-cancellation. Coordinate agents and pipeline jobs without embedding their
-task-specific logic.
+The orchestrator will run as a Python service, coordinating the API and model
+workers. `workflows/`, `scheduling/` and `state/` are extension points; a running
+orchestrator is not implemented yet.
 
-- `workflows/`: workflow definitions, task dependencies, and routing rules.
-- `scheduling/`: dispatch, concurrency limits, retry policies, and timeouts.
-- `state/`: run/task lifecycle transitions and persisted progress tracking.
+## Existing database workflow
 
-Accept validated requests from the Python API handlers, dispatch ready tasks, and
-persist status/results using the database. Plan for duplicate task
-delivery, recovery after restarts, and cancellation of in-flight work.
+The queue and stage transitions already live in the SpacetimeDB module's
+`pipeline.ts`. Reuse these through the Python SDK:
 
-Implement the orchestrator in Python and run it in a local Docker container.
+- Jobs move `QUEUED` → `RUNNING` → `SUCCEEDED` or `FAILED`. There is no
+  `CANCELLED` state. A stable case/revision/role key prevents duplicate jobs.
+- `claim_job` atomically assigns a lease and records its connection ID.
+  Heartbeat/completion require the worker identity, current revision, RUNNING
+  status, matching lease token and unexpired lease. They do not separately check
+  connection ownership. Keep one worker SDK connection open throughout the job.
+- Leases default to 30 seconds. A scheduled sweep runs every two seconds,
+  requeues expired work, and fails the job after three attempts, moving the case
+  to `RETRYABLE_ERROR`. `JOB_LEASE_SECONDS` and `JOB_MAX_ATTEMPTS` are applied by
+  `afterhours-db bootstrap`.
+- EXTRACTION completion queues MATCHING. MATCHING queues INVESTIGATION when
+  unresolved questions remain. INVESTIGATION with open questions sets
+  `WAITING_FOR_INPUT`. Otherwise the case awaits the future proposal stage.
+- `afterhours_db.cases.is_awaiting_proposal(db, case_id)` identifies that handoff:
+  the case is MATCHING/INVESTIGATING and every current-revision job succeeded.
 
-## What the database already does (don't rebuild it)
+## Worker integration
 
-The job queue lives in SpacetimeDB (`backend/db/spacetime/spacetimedb/src/pipeline.ts`):
+Use `AfterHoursDB.connect("worker")` with
+`afterhours_db.jobs.list_claimable_jobs`, `claim_job`, `heartbeat_job` and
+`complete_job`. It keeps a JSON WebSocket for worker reducer calls because a
+claim requires `ctx.connectionId`. Reads use fresh authenticated
+HTTP queries. There are no SDK subscription caches or view-event callbacks;
+poll jobs and case state explicitly. Gateway operations use HTTP.
 
-- **Job statuses:** `QUEUED` → `RUNNING` (leased) → `SUCCEEDED` or `FAILED`. These replace
-  the earlier suggested states. There is no `CANCELLED` status yet.
-- **Job identity:** the job key is `caseId:revision:role`, so creating a job twice is a no-op.
-  The roles are `EXTRACTION`, `MATCHING` and `INVESTIGATION`.
-- **Leases:** `claim_job` hands a queued job to exactly one worker. The default lease is
-  30s, extended by `heartbeat_job`. A worker whose lease expired cannot complete the job.
-- **Retries:** a sweep runs every 2s. It requeues expired leases, and after 3 attempts the job
-  becomes `FAILED` and the case becomes `RETRYABLE_ERROR`. Tune this with `JOB_LEASE_SECONDS`
-  and `JOB_MAX_ATTEMPTS`, applied by `npm run db:bootstrap`.
-- **Duplicate and stale delivery:** every worker call carries the case revision, and a stale
-  revision is rejected.
-- **Stage advancement:** `complete_job` advances the case today. EXTRACTION done queues
-  MATCHING. MATCHING done queues INVESTIGATION if the agent reported unresolved questions.
-  INVESTIGATION done with questions still open sets `WAITING_FOR_INPUT`. Otherwise the case
-  waits for `build_proposal`; `isAwaitingProposal()` in `db/repositories/cases.ts` reports
-  when. **If you want orchestration to own this routing, say so and it moves out of
-  `complete_job`.**
+The [agent README](../agents/README.md) shows the Python integration and model
+contracts. Keep heartbeats running during inference, treat a failed renewal as
+lost ownership, and record real model runs as `LIVE` or fixture replays as
+`REPLAYED`. The backend seed queues one EXTRACTION job on a fresh database.
 
-## What's still to build here
+## Remaining work
 
-- **The worker loop:** find queued jobs, claim, heartbeat, run the role, complete. Python does
-  this over HTTP, verified in [setup guide §10](../../docs/SPACETIMEDB_DOCUMENT_STORAGE_SETUP.md).
-  A TypeScript reference loop is in [../agents/README.md](../agents/README.md).
-- **Triggering `build_proposal`** when a case is awaiting it (the reducer doesn't exist yet).
-- **Revision bumps and cancellation:** when a case's inputs change (for example a new document
-  version), the case revision should increment, the old proposal should be superseded, and queued
-  or leased jobs for the old revision should be cancelled. **Nothing bumps the revision yet.**
-  Stale work is already rejected, but cancelling it is not built.
-- **Concurrency limits and backoff** between retries (the database only bounds the attempt count).
+- The polling worker loop, provider calls, concurrency limits, retry backoff and
+  graceful shutdown/recovery.
+- API integration; all four public review endpoints remain explicit 501 stubs.
+- Calculator and `build_proposal`, clarification/exception handling, reviewer
+  decisions and approvals, and authorized CSV export.
+- Revision bumps and invalidation when inputs change. Existing revision checks
+  reject stale work, but changing inputs does not yet bump a case revision or
+  cancel its old jobs/proposals automatically.
+
+Future services must keep database credentials server-side. The frontend calls
+the API; it does not connect to SpacetimeDB with gateway or worker tokens.

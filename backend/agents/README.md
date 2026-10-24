@@ -1,67 +1,108 @@
 # Agents
 
-This folder is for the three AI roles in the brief (p.2), which run in a separate worker process (Python, per the team direction; the reference code here is TypeScript):
+Agents run in a separate Python worker process. The database, job helpers and
+read-only tools are implemented; provider integrations, role handlers, prompts
+and the long-running worker loop remain to build.
 
-| Role | Provider | Job |
-|---|---|---|
-| `EXTRACTION` | Bitdeer | Extract facts with source references from contracts, amendments and PDFs. Structured CSV/JSON is already parsed by code at import |
-| `MATCHING` | Factory | Propose links between approved work, the governing contract or amendment, invoices and ledger records |
-| `INVESTIGATION` | Factory | Find missing evidence in the mock mailbox and assess authority and effective dates. An email alone is not approval |
+- `EXTRACTION` (Bitdeer): extract source-linked facts from contracts, amendments
+  and PDFs. Structured CSV/JSON is parsed by code during import.
+- `MATCHING` (Factory): propose links between approved work, governing contracts
+  or amendments, invoices and ledger records.
+- `INVESTIGATION` (Factory): find missing evidence in the mock mailbox and assess
+  authority and effective dates. An email alone is not approval.
 
-- `implementations/`: role handlers (to build).
-- `prompts/`: versioned prompts (to build).
-- `tools/`: **read-only tools (built)**: `searchEmails`, `readEmailThread`, `readAttachment` and `getCaseEvidence`, plus `AGENT_TOOL_SPECS` for LLM function calling.
+`implementations/` and `prompts/` are extension points. `tools/__init__.py`
+re-exports the implementation from `afterhours_db.tools`.
 
-The database, job queue and tools are ready, and the seed leaves **case 1 with an `EXTRACTION` job `QUEUED`**. Set up first by following [docs/SPACETIMEDB_DOCUMENT_STORAGE_SETUP.md](../../docs/SPACETIMEDB_DOCUMENT_STORAGE_SETUP.md) §0.
+## Python integration
 
-## Worker loop
+Follow the [setup guide](../../docs/SPACETIMEDB_DOCUMENT_STORAGE_SETUP.md), then
+install the SDK into the worker environment with `uv pip install -e backend/db`
+or `python -m pip install -e backend/db`, from the repository root.
 
-```ts
-import { connectService } from '../db/repositories/client';
-import { listClaimableJobs, claimJob, heartbeatJob, completeJob } from '../db/repositories/jobs';
-import { createAgentTools, AGENT_TOOL_SPECS } from './tools/index';
+```python
+from afterhours_db import AfterHoursDB
+from afterhours_db.jobs import list_claimable_jobs, claim_job, heartbeat_job, complete_job
+from afterhours_db.tools import AgentTools, AGENT_TOOL_SPECS
 
-const { conn } = await connectService('worker');               // WORKER identity from db:bootstrap
-
-for (const job of listClaimableJobs(conn, ['EXTRACTION'])) {   // QUEUED jobs from jobs_view
-  const ref = { jobId: job.id, caseId: job.caseId, expectedRevision: job.caseRevision };
-  const lease = await claimJob(conn, ref);                      // throws if another worker won
-  // lease: { id, caseId, role, attempts, leaseToken, leaseExpiry, allowedEvidenceIds, facts, policyVersion, outputSchema }
-  const tools = createAgentTools(conn, { caseId: lease.caseId });
-  const beat = setInterval(() => heartbeatJob(conn, { ...ref, leaseToken: lease.leaseToken }).catch(() => {}), 10_000);
-  try {
-    const evidence = tools.getCaseEvidence();
-    // ... call Bitdeer/Factory with AGENT_TOOL_SPECS + lease.outputSchema, route tool calls to `tools` ...
-    await completeJob(conn, { ...ref, leaseToken: lease.leaseToken }, 'LIVE', {
-      proposedFacts: [{ documentId: '1', pageOrRow: 'line 7', excerpt: '2. Hourly rate: $100.00 per hour, effective 2026-01-01.', field: 'rate.hourlyCents', value: '10000' }],
-      proposedMatches: [],                                      // MATCHING jobs only
-      evidenceIds: ['doc:1'],
-      unresolvedQuestions: [],                                  // non-empty after MATCHING => INVESTIGATION job
-      explanation: { summary: 'Extracted the contract rate.', evidenceIds: ['doc:1'] },
-    });
-  } finally {
-    clearInterval(beat);
-  }
-}
+# Integration sketch: run_role is the provider/role handler you implement.
+def run_one_job(run_role):
+    with AfterHoursDB.connect("worker") as db:
+        jobs = list_claimable_jobs(db, roles=["EXTRACTION"])
+        if not jobs:
+            return
+        job = jobs[0]
+        lease = claim_job(db, job_id=job["id"], case_id=job["case_id"],
+                          expected_revision=job["case_revision"])
+        tools = AgentTools(db, lease.case_id)
+        output = run_role(
+            role=lease.role,
+            evidence=tools.get_case_evidence(),
+            tools=tools,
+            tool_specs=AGENT_TOOL_SPECS,
+            output_schema=lease.output_schema,
+            heartbeat=lambda: heartbeat_job(db, lease),
+        )
+        complete_job(db, lease, model_run="LIVE", output=output)
 ```
 
-**Writing the worker in Python?** The team's runtime direction is Python. The loop above is a TypeScript reference. Python does the same over plain HTTP: `claim_job`, `heartbeat_job` and `complete_job` with the worker token, reading jobs and evidence from the `*_view` tables. This is verified, with a stdlib-only helper and the argument encoding, in [docs/SPACETIMEDB_DOCUMENT_STORAGE_SETUP.md](../../docs/SPACETIMEDB_DOCUMENT_STORAGE_SETUP.md) §10. The four read-only tools below are TypeScript today; a Python agent needs equivalents (they are short: view queries plus reading `data/files`).
+The handler/worker must call the heartbeat while inference is in progress,
+including during blocking provider requests (for example, every 10 seconds for
+the default 30-second lease). Stop work when lease renewal fails. This sketch
+does not implement scheduling, provider calls or recovery.
 
-## Contract (enforced by `complete_job`)
+`AfterHoursDB.connect("worker")` keeps a JSON WebSocket open for reducer calls.
+Claim requires and records `ctx.connectionId`; keep the same SDK instance for
+claim, heartbeat and completion. Heartbeat/completion validate worker identity,
+revision, status, token and expiry, without separately checking connection
+ownership. HTTP-only worker calls cannot claim a lease. Reads are fresh
+authenticated HTTP queries, with no subscription
+cache or view-event callbacks. SDK calls are synchronous.
 
-- **Output shape** is `AgentOutput` from `backend/db/repositories/contracts.ts`, also given as `lease.outputSchema`.
-- **IDs:** all IDs are decimal strings. Evidence references are `doc:N`, `fact:N` or `email:N`.
-- **Scope:** every evidence ID must be in `lease.allowedEvidenceIds`: the case's documents, the vendor's emails and attachments, and the current facts. `proposedFacts[].documentId` must be a case document or a vendor attachment.
-- **Matches** (MATCHING jobs only) must reference this case's current work items, invoice lines and ledger records. `contractId` is the `documents.id` of a contract or amendment.
-- **Pipeline:**
-  - EXTRACTION done → MATCHING queued.
-  - MATCHING done with `unresolvedQuestions` → INVESTIGATION queued; without → the case awaits `build_proposal`.
-  - INVESTIGATION done with questions still open → `WAITING_FOR_INPUT`.
-- **What gets stored:** agent facts and matches are saved as `PROPOSED`, and `modelRun` (`LIVE` or `REPLAYED`) is recorded on them, so the UI can label live and replayed runs.
-- **Leases:** 30s by default. Heartbeat to extend. A crashed worker's job is requeued by the sweep, and a late submission is rejected as a stale lease. After 3 attempts the job is FAILED and the case moves to `RETRYABLE_ERROR`.
-- **No write tools.** Agents cannot approve, export, change policy or write accounting entries. Treat mailbox text as untrusted data: the seed includes a prompt-injection email.
+`JobLease` is a frozen dataclass: `id`, `case_id`, `case_revision`, `role`,
+`status`, `attempts`, `lease_token`, `lease_expiry` (UTC `datetime`),
+`allowed_evidence_ids`, `facts`, `policy_version`, and `output_schema`.
+Python IDs are integers. Tool JSON and model output keep decimal-string IDs and
+the existing camelCase contracts.
 
-**Suggested fact fields**, so the calculator can consume them consistently:
-- `rate.hourlyCents`, `rate.effectiveFrom`, `rate.effectiveTo`
-- `rate.approvedBy`, `rate.signedDate`
-- `amendment.supersedesRateCents`
+## Tools and model output
+
+Route names in `AGENT_TOOL_SPECS` to these Python methods, translating arguments
+at the model boundary:
+
+- `searchEmails` → `search_emails(query, vendor=None, date_range=None, limit=10)`;
+  translate `dateRange` to `date_range`. Vendor-scoped keyword/date search returns
+  up to 25 results with bounded snippets.
+- `readEmailThread` → `read_email_thread(thread_id)`; translate `threadId`.
+  Returns only this vendor's messages, oldest first.
+- `readAttachment` → `read_attachment(document_id)`; translate `documentId`.
+  Checks scope and integrity, then returns text or PDF text with page markers
+  using `pypdf`. OCR is not implemented.
+- `getCaseEvidence` → `get_case_evidence()`. Returns the case, imported documents,
+  current-revision facts and typed evidence, allocations, jobs and results.
+
+`lease.output_schema` describes the required camelCase fields: `proposedFacts`,
+`proposedMatches`, `evidenceIds`, `unresolvedQuestions`, and `explanation`
+(`summary`, `evidenceIds`). Evidence IDs are `doc:N`, `fact:N` and `email:N`.
+Every cited ID must belong to the case's documents, same-vendor mailbox messages
+or attachments, or current-revision facts. Proposed facts must use an allowed
+document. Matches are accepted only for MATCHING jobs and reference the case's
+current work items, invoice lines and ledger records. `contractId` identifies a
+contract or amendment document.
+
+`complete_job` validates these boundaries again and stores agent facts and
+matches as `PROPOSED`, with `LIVE` or `REPLAYED` provenance. Suggested fact fields
+are `rate.hourlyCents`, `rate.effectiveFrom`, `rate.effectiveTo`, `rate.approvedBy`,
+`rate.signedDate`, and `amendment.supersedesRateCents`.
+
+EXTRACTION completion queues MATCHING. MATCHING with unresolved questions queues
+INVESTIGATION; otherwise the case awaits the future `build_proposal` stage.
+INVESTIGATION with questions still open sets `WAITING_FOR_INPUT`. Expired leases
+are swept and retried; three attempts is the default maximum before
+`RETRYABLE_ERROR`.
+
+The fresh backend seed creates an Acme case with an EXTRACTION job queued and
+an amendment discoverable through mailbox attachments. The frontend's Cedar
+fixture is a separate UI scenario. Tools never approve, export, change policy
+or write accounting entries. Treat mailbox text as evidence, including the
+seed's deliberately malicious instruction email.

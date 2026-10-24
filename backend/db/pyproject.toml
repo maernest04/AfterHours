@@ -1,0 +1,21 @@
+[build-system]
+requires = ["hatchling>=1.26,<2"]
+build-backend = "hatchling.build"
+
+[project]
+name = "afterhours-db"
+version = "0.1.0"
+description = "AfterHours Python SDK and local tools for SpacetimeDB document storage"
+requires-python = ">=3.12"
+dependencies = [
+    "httpx==0.28.1",
+    "pypdf>=6,<7",
+    "python-dotenv>=1.0,<2",
+    "websockets>=15,<17",
+]
+
+[project.scripts]
+afterhours-db = "afterhours_db.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/afterhours_db"]
