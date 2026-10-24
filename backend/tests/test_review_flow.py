@@ -1,7 +1,8 @@
 """Opt-in HTTP + real database + ready-worker flow; no paid model requests.
 
 Run from the repo root with AFTERHOURS_FLOW_TESTS=1 and AFTERHOURS_API_URL set.
-Extraction is explicitly replayed in the test because its worker is not merged.
+All three merged worker implementations run with explicit provider replay fixtures.
+Requires idle shared database workers; an independent live watcher could claim test work.
 """
 from contextlib import asynccontextmanager
 import asyncio
@@ -17,6 +18,24 @@ import httpx
 
 ROOT = Path(__file__).resolve().parents[2]
 SEED = ROOT / 'backend/db/src/afterhours_db/seed_data'
+
+
+@asynccontextmanager
+async def extraction_replay():
+    text = (SEED / 'acme_msa.txt').read_text()
+
+    def fact(field, value, contains):
+        number, excerpt = next((i, line) for i, line in enumerate(text.splitlines(), 1) if contains in line)
+        return {'pageOrRow': f'line {number}', 'excerpt': excerpt, 'field': field, 'value': value}
+
+    async def decide(prompt, schema):
+        return {'facts': [fact('rate.hourlyCents', '10000', 'Hourly rate:'),
+                          fact('rate.effectiveFrom', '2026-01-01', 'effective'),
+                          fact('rate.approvedBy', 'Dana Whitfield', 'Authorized signatory:'),
+                          fact('rate.signedDate', '2025-12-15', 'Signed:')],
+                'unresolvedQuestions': []}
+
+    yield decide
 
 
 class MatchingReplay:
@@ -120,7 +139,6 @@ class ReviewFlowTests(unittest.TestCase):
 
             from afterhours_db import AfterHoursDB
             from afterhours_db.cases import get_case, is_awaiting_proposal, list_jobs
-            from afterhours_db.jobs import claim_job, complete_job
             from afterhours_db.mailbox import store_email
             from afterhours_db.tools import AgentTools
             from afterhours_orchestrator.pipeline import run_cycle
@@ -136,7 +154,7 @@ class ReviewFlowTests(unittest.TestCase):
                 self.assertFalse(report.errors, report.errors)
                 jobs = list_jobs(worker, case_id)
                 self.assertEqual([(j['role'], j['status']) for j in jobs], [('EXTRACTION', 'QUEUED')])
-                # Missing extraction is a real queue boundary, never an automatic fake success.
+                # A cycle without an extraction provider leaves its job queued.
                 queued = client.get('/get-review', params=params).json()
                 self.assertEqual(queued['status'], 'EXTRACTING')
                 self.assertNotEqual(queued['sequence'], initial['sequence'])
@@ -149,12 +167,8 @@ class ReviewFlowTests(unittest.TestCase):
                     sender='contracts@synthetic.example', recipients=['ap@synthetic.example'],
                     subject='Signed amendment (MOCK)', sent_at='2026-08-28T17:05:00Z',
                     body='Synthetic mailbox: signed amendment attached.', attachment_document_ids=[amendment.id])
-                lease = claim_job(worker, jobs[0]['id'], case_id, jobs[0]['case_revision'])
-                complete_job(worker, lease, 'REPLAYED', {
-                    'proposedFacts': [], 'proposedMatches': [], 'evidenceIds': [f'doc:{contract}'],
-                    'unresolvedQuestions': [], 'explanation': {
-                        'summary': 'Explicit test-only extraction replay.', 'evidenceIds': [f'doc:{contract}']}})
-                report = run_cycle(gateway, worker, case_id=case_id, max_jobs=4,
+                report = run_cycle(gateway, worker, case_id=case_id, max_jobs=3,
+                    extraction_session=extraction_replay, extraction_model_run='REPLAYED',
                     matching_provider_factory=MatchingReplay,
                     investigation_session=investigation_replay(contract, amendment.id, unique),
                     investigation_model_run='REPLAYED')

@@ -26,3 +26,5 @@ backend/.secrets/
 
 # Local file store (persistent server volume for the demo)
 data/
+backend/.secrets/
+backend/.secrets*/

@@ -100,10 +100,13 @@ class AfterHoursDB:
                        and (not latest_only or doc.id not in superseded)), key=lambda doc: doc.id)
 
     def get_document(self, document_id: int) -> Document | None:
-        return next((doc for doc in self.list_documents() if doc.id == document_id), None)
+        rows = self.client.query(f'SELECT * FROM documents_view WHERE id = {int(document_id)}')
+        return Document.from_row(rows[0]) if rows else None
 
     def find_by_upload_key(self, upload_key: str) -> Document | None:
-        return next((doc for doc in self.list_documents() if doc.upload_key == upload_key), None)
+        quoted = upload_key.replace("'", "''")
+        rows = self.client.query(f"SELECT * FROM documents_view WHERE upload_key = '{quoted}'")
+        return Document.from_row(rows[0]) if rows else None
 
     def find_by_content_hash(self, content_hash: str) -> list[Document]:
         return [doc for doc in self.list_documents() if doc.content_hash == content_hash]

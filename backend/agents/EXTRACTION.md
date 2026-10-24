@@ -68,5 +68,12 @@ AFTERHOURS_INTEGRATION=1 ... # also runs the database integration tests (use a t
 `test_extraction.py` covers validation (forged quotes/values, injection, PDF pages),
 repair, scoping and the HTTP client against a local fake Bitdeer server.
 `test_extraction_integration.py` runs the real database/lease/reducer path with a
-`REPLAYED` model fixture. **No live Bitdeer call has been made yet**: the key is
-pending, and the request shape follows Bitdeer's published docs.
+`REPLAYED` model fixture. The Docker HTTP flow also exercises the real extraction,
+matching and investigation workers with replayed decisions. Run the separate
+`pipeline-live-tests` Compose service for a paid full-agent check; it requires
+all three persisted stages to be `LIVE`. Provider startup failures do not count
+as live inference verification. See the [root checks](../../README.md#checks).
+
+The 2026-10-24 live pipeline check completed Bitdeer extraction followed by Factory
+matching and investigation, with all three results persisted as `LIVE`. Its slow
+extraction attempt lost its lease; the scoped retry completed successfully.

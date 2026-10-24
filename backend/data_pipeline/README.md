@@ -72,8 +72,8 @@ supported CSV/text formats before uploading. Ambiguous formats are rejected.
 ## Remaining integration
 
 Create persists files and an imported case; the pipeline recovers imports with
-`start_review` and dispatches merged matching/investigation workers. Get/list read
-stored state, including polling live snapshots. Extraction, automatic calculation,
+`start_review` and dispatches merged extraction/matching/investigation workers. Get/list read
+stored state, including polling live snapshots. Automatic calculation,
 persisted mock approval and export remain pending. PDF extraction and input-revision
 invalidation also remain separate work. The mock mailbox and backend Acme fixture are
 synthetic; the frontend Cedar scenario is separate.

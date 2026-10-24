@@ -1,8 +1,8 @@
 # Orchestrator
 
 This Python service polls the existing SpacetimeDB workflow. It recovers accepted
-`IMPORTED` cases with `start_review`, then dispatches the merged MATCHING and
-INVESTIGATION workers. Database jobs, leases, revision checks and stage reducers
+`IMPORTED` cases with `start_review`, then dispatches the merged EXTRACTION,
+MATCHING and INVESTIGATION workers. Database jobs, leases, revision checks and stage reducers
 remain the only workflow state; there is no second queue or state store.
 
 Current boundaries are intentional:

@@ -6,6 +6,7 @@ import unittest
 from unittest.mock import AsyncMock, Mock, patch
 
 from afterhours_db.jobs import JobLease
+from afterhours_db.tools import ToolScopeError
 from jsonschema import ValidationError
 
 from afterhours_investigation.factory import factory_session
@@ -45,6 +46,21 @@ def documents(text=AMENDMENT):
 
 
 class HandlerTests(unittest.IsolatedAsyncioTestCase):
+    async def test_unavailable_thread_can_finish_unresolved_without_reading_evidence(self):
+        tools = Mock()
+        tools.read_email_thread.side_effect = ToolScopeError('Outside case')
+        output = amendment_output()
+        output.update(proposedFacts=[], evidenceIds=[], unresolvedQuestions=['No signed amendment was found.'])
+        output['explanation'] = {'summary': 'The requested evidence is unavailable.', 'evidenceIds': []}
+        decide = AsyncMock(side_effect=[
+            {'tool': 'readEmailThread', 'arguments': {'threadId': 'guessed'}},
+            {'tool': 'finish', 'output': output}])
+        result = await investigate(snapshot(), tools, decide)
+        self.assertEqual(result['proposedFacts'], [])
+        self.assertTrue(result['unresolvedQuestions'])
+        self.assertIn('No evidence was read', decide.call_args_list[1].args[0])
+        tools.read_attachment.assert_not_called()
+
     async def test_real_dispatch_reads_sources_and_ignores_injected_email_action(self):
         tools = SimpleNamespace(
             read_attachment=lambda document_id: documents()[document_id],
