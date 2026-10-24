@@ -30,6 +30,9 @@ uv run --project backend/agents afterhours-investigate --case-id 1 --watch
 MATCHING must finish first. Failures exit the process and leave the lease to the
 database's bounded retry/sweep policy; restart the command after fixing the error.
 One-shot mode omits `--watch` and processes at most one claimable job.
+Use `--search-index data/enron/corpus.sqlite` for the optional indexed Enron
+retrieval path; see the [stress benchmark](ENRON_STRESS.md). Publish the latest
+module first: bounded source reads use the `read_mail_evidence` procedure.
 
 Without uv, use a Python 3.12+ virtual environment and install both local packages:
 

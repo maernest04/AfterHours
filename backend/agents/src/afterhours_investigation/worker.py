@@ -14,7 +14,7 @@ from .factory import factory_session
 from .handler import investigate
 
 
-async def run_job(db, lease, decide, *, model_run, timeout=180):
+async def run_job(db, lease, decide, *, model_run, timeout=180, tools=None):
     if lease.role != 'INVESTIGATION':
         raise ValueError('This handler only accepts INVESTIGATION leases')
     interval = min(10, max(0.1, (lease.lease_expiry - datetime.now(timezone.utc)).total_seconds() / 3))
@@ -25,11 +25,11 @@ async def run_job(db, lease, decide, *, model_run, timeout=180):
             await asyncio.to_thread(heartbeat_job, db, lease)
 
     async def process():
-        tools = AgentTools(db, lease.case_id)
-        evidence = await asyncio.to_thread(tools.get_case_evidence)
+        scoped_tools = tools or AgentTools(db, lease.case_id)
+        evidence = await asyncio.to_thread(scoped_tools.get_case_evidence)
         if evidence['case']['inputRevision'] != lease.case_revision:
             raise ValueError('Case revision changed before investigation')
-        return await investigate(evidence, tools, decide)
+        return await investigate(evidence, scoped_tools, decide)
 
     task = asyncio.create_task(process())
     heartbeat = asyncio.create_task(renew())
@@ -50,15 +50,20 @@ async def run_job(db, lease, decide, *, model_run, timeout=180):
         await asyncio.gather(task, heartbeat, return_exceptions=True)
 
 
-async def run(case_id, watch):
+async def run(case_id, watch, search_index=None):
     with AfterHoursDB.connect('worker') as db:
         while True:
             jobs = [job for job in list_claimable_jobs(db, ['INVESTIGATION']) if job['case_id'] == case_id]
             if jobs:
                 async with factory_session() as decide:
                     job = jobs[0]
-                    lease = claim_job(db, job['id'], job['case_id'], job['case_revision'])
-                    result = await run_job(db, lease, decide, model_run='LIVE')
+                    tools = None
+                    if search_index:
+                        from .indexed_tools import IndexedAgentTools
+                        tools = IndexedAgentTools(db, case_id, search_index)
+                    lease = claim_job(db, job['id'], job['case_id'], job['case_revision'],
+                                      evidence_ids=tools.evidence_ids() if tools else None)
+                    result = await run_job(db, lease, decide, model_run='LIVE', tools=tools)
                     print(json.dumps({'jobId': result['id'], 'status': result['status'], 'modelRun': 'LIVE'}))
             if not watch:
                 return
@@ -69,6 +74,7 @@ def main():
     parser = argparse.ArgumentParser(description='Run LIVE Investigation jobs for one case')
     parser.add_argument('--case-id', type=int)
     parser.add_argument('--watch', action='store_true')
+    parser.add_argument('--search-index', type=Path, help='Derived Enron corpus.sqlite index for bounded retrieval')
     parser.add_argument('--check-provider', action='store_true')
     args = parser.parse_args()
     load_dotenv(Path.cwd() / '.env')
@@ -85,7 +91,7 @@ def main():
     elif args.case_id is None or args.case_id < 1:
         parser.error('--case-id must be a positive integer')
     else:
-        asyncio.run(run(args.case_id, args.watch))
+        asyncio.run(run(args.case_id, args.watch, args.search_index))
 
 
 if __name__ == '__main__':

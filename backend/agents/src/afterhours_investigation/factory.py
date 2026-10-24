@@ -1,4 +1,5 @@
 from contextlib import asynccontextmanager
+from dataclasses import asdict
 import os
 from pathlib import Path
 import shutil
@@ -10,12 +11,12 @@ from .handler import INSTRUCTIONS
 
 
 @asynccontextmanager
-async def factory_session():
+async def factory_session(*, metrics=None, system_prompt=INSTRUCTIONS):
     executable = os.getenv('DROID_EXEC_PATH') or 'droid'
     if not shutil.which(executable):
         raise RuntimeError('Droid CLI is missing; install and authenticate it before running LIVE jobs')
     # Droid treats an empty allowlist as unrestricted; this ID has no implementation.
-    config = SessionConfig(system_prompt=INSTRUCTIONS, restrict_tools={'afterhours-no-native-tools'},
+    config = SessionConfig(system_prompt=system_prompt, restrict_tools={'afterhours-no-native-tools'},
                            auto_reject_permission_requests=True, disable_builtin_skills=True)
     with TemporaryDirectory(prefix='afterhours-investigation-') as directory:
         async with Session(cwd=Path(directory), model=os.getenv('FACTORY_MODEL_ID') or None,
@@ -30,6 +31,11 @@ async def factory_session():
                     async for _ in stream:
                         pass
                 result = stream.result
+                if metrics is not None:
+                    usage = result.usage
+                    metrics.append({**(asdict(usage) if usage else {}),
+                                    'seconds': result.duration.total_seconds(), 'success': result.success,
+                                    'model': session.settings.model})
                 if not result.success or result.output is None:
                     raise RuntimeError(f'Factory investigation failed: {result.subtype}')
                 return result.output

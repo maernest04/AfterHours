@@ -34,14 +34,15 @@ def allowed_evidence_ids(db: AfterHoursDB, case_id: int | str) -> list[str]:
     if case is None:
         return []
     ids = dict.fromkeys(f'doc:{id}' for id in case_document_ids(db, case_id))
-    attachments = _rows(db, 'attachments_view')
+    attachments = {}
+    for attachment in _rows(db, 'attachments_view'):
+        attachments.setdefault(attachment['email_id'], []).append(attachment['document_id'])
     for email in _rows(db, 'emails_view'):
         if email['vendor_id'] != case['vendor_id']:
             continue
         ids[f"email:{email['id']}"] = None
-        for attachment in attachments:
-            if attachment['email_id'] == email['id']:
-                ids[f"doc:{attachment['document_id']}"] = None
+        for document_id in attachments.get(email['id'], []):
+            ids[f'doc:{document_id}'] = None
     for fact in list_facts(db, case_id):
         ids[f"fact:{fact['id']}"] = None
     return list(ids)
@@ -100,6 +101,9 @@ class AgentTools:
             raise ToolScopeError(f'Case {self.case_id} is not visible to this worker')
         return case
 
+    def evidence_ids(self) -> list[str]:
+        return allowed_evidence_ids(self.db, self.case_id)
+
     def _vendor_emails(self) -> list[dict]:
         vendor_id = self._case()['vendor_id']
         return [email for email in _rows(self.db, 'emails_view') if email['vendor_id'] == vendor_id]
@@ -155,7 +159,7 @@ class AgentTools:
 
     def read_attachment(self, document_id: str) -> dict:
         """Read hash-verified case/vendor attachment text, preserving PDF pages."""
-        if f'doc:{document_id}' not in allowed_evidence_ids(self.db, self.case_id):
+        if f'doc:{document_id}' not in self.evidence_ids():
             raise ToolScopeError(f"Document {document_id} is outside this job's scope")
         document, data = self.db.read_document(int(document_id))
         if document.media_type == 'application/pdf':
@@ -188,7 +192,7 @@ class AgentTools:
                 'documentId': str(doc.id), 'evidenceId': f'doc:{doc.id}',
                 'type': doc.type, 'version': doc.version,
                 'filename': doc.original_filename, 'mediaType': doc.media_type,
-            } for doc in self.db.list_documents() if doc.id in document_ids],
+            } for doc_id in document_ids if (doc := self.db.get_document(doc_id)) is not None],
             'facts': [_fact_summary(fact) for fact in list_facts(self.db, self.case_id)],
             'workItems': [{
                 'id': str(row['id']), 'factId': str(row['fact_id']),
@@ -221,7 +225,7 @@ class AgentTools:
                 'jobId': str(row['job_id']), 'modelRun': row['model_run'],
                 'summary': row['summary'], 'unresolvedQuestions': row['unresolved_questions'],
             } for row in _rows(self.db, 'job_results_view') if row['case_id'] == self.case_id],
-            'allowedEvidenceIds': allowed_evidence_ids(self.db, self.case_id),
+            'allowedEvidenceIds': self.evidence_ids(),
         }
 
 

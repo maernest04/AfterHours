@@ -599,12 +599,13 @@ export const allocationsView = spacetimedb.view({ name: 'allocations_view', publ
 
 export const emailsView = spacetimedb.view({ name: 'emails_view', public: true }, t.array(emails.rowType), ctx => {
   const company = companyForService(ctx);
-  return company ? [...ctx.db.emails.companyId.filter(company)] : [];
+  return ctx.from.emails.where(email => email.companyId.eq(company ?? '')).build();
 });
 
 export const attachmentsView = spacetimedb.view({ name: 'attachments_view', public: true }, t.array(attachments.rowType), ctx => {
   const company = companyForService(ctx);
-  return company ? [...ctx.db.emails.companyId.filter(company)].flatMap(e => [...ctx.db.attachments.emailId.filter(e.id)]) : [];
+  return ctx.from.emails.where(email => email.companyId.eq(company ?? '')).rightSemijoin(
+    ctx.from.attachments, (email, attachment) => email.id.eq(attachment.emailId)).build();
 });
 
 export const jobsView = spacetimedb.view({ name: 'jobs_view', public: true }, t.array(jobs.rowType), ctx => {

@@ -128,6 +128,20 @@ export const storeDocument = spacetimedb.reducer(
   }
 );
 
+const DocumentImport = t.object('DocumentImport', {
+  uploadKey: t.string(), storageKey: t.string(), contentHash: t.string(), byteLength: t.u32(),
+  mediaType: t.string(), originalFilename: t.string(), type: t.string(), referenceId: t.option(t.string()), sourceLabel: t.string(),
+});
+export const importDocumentBatch = spacetimedb.procedure({companyId: t.string(), documents: t.array(DocumentImport)}, t.string(), (ctx, a) => ctx.withTx(tx => {
+  requireGateway(tx);
+  requireCompany(tx, a.companyId);
+  if (a.documents.length > 100) throw new SenderError('At most 100 documents per batch.');
+  return JSON.stringify(a.documents.map(document => {
+    storeDocument(tx, {...document, companyId: a.companyId});
+    return tx.db.documents.uploadKey.find(document.uploadKey)!.id.toString();
+  }));
+}));
+
 /**
  * Gateway-only. Record version N+1 (brief: "preserve source versions"). The previous row is not
  * modified; only the latest version can be superseded, and identical content is rejected.
@@ -181,9 +195,8 @@ export const documentsView = spacetimedb.view(
   { name: 'documents_view', public: true },
   t.array(documents.rowType),
   ctx => {
-    if (!ctx.db.serviceIdentity.identity.find(ctx.sender)) return [];
-    const s = ctx.db.settings.id.find(0);
-    return s ? [...ctx.db.documents.companyId.filter(s.companyId)] : [];
+    const company = ctx.db.serviceIdentity.identity.find(ctx.sender) ? ctx.db.settings.id.find(0)?.companyId : undefined;
+    return ctx.from.documents.where(document => document.companyId.eq(company ?? '')).build();
   }
 );
 
@@ -232,3 +245,4 @@ export {
 } from './pipeline';
 
 export { configurePostingPeriod, buildProposal, proposalsView } from './calculator';
+export { importMailBatch, readMailEvidence } from './mailbox_access';

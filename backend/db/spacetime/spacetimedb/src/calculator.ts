@@ -45,7 +45,8 @@ export const buildProposal = spacetimedb.reducer({
   for (const e of ctx.db.emails.vendorId.filter(c.vendorId)) {
     if (e.companyId === c.companyId) for (const attachment of ctx.db.attachments.emailId.filter(e.id)) docIds.add(attachment.documentId);
   }
-  for (const docId of docIds) check(![...ctx.db.documents.iter()].some(d => d.supersedesDocumentId === docId), 'Source document changed; a new case revision is required.');
+  for (const document of ctx.db.documents.iter()) check(document.supersedesDocumentId === undefined ||
+    !docIds.has(document.supersedesDocumentId), 'Source document changed; a new case revision is required.');
   if (c.currentProposalId !== undefined) {
     const existing = ctx.db.proposals.id.find(c.currentProposalId);
     check(existing && existing.inputRevision === c.inputRevision && existing.policyVersion === settings.policyVersion,

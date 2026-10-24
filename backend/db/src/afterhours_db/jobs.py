@@ -92,7 +92,7 @@ def list_claimable_jobs(db: AfterHoursDB, roles: list[str] | None = None) -> lis
                   key=lambda job: job['id'])
 
 
-def claim_job(db: AfterHoursDB, job_id: int, case_id: int, expected_revision: int) -> JobLease:
+def claim_job(db: AfterHoursDB, job_id: int, case_id: int, expected_revision: int, *, evidence_ids: list[str] | None = None) -> JobLease:
     connection_id = getattr(db.client, 'connection_id', None)
     if connection_id is None:
         raise RuntimeError('Claiming jobs requires AfterHoursDB.connect("worker") and its persistent connection')
@@ -105,7 +105,8 @@ def claim_job(db: AfterHoursDB, job_id: int, case_id: int, expected_revision: in
               'validationStatus': f['validation_status']} for f in list_facts(db, case_id)]
     return JobLease(job['id'], job['case_id'], job['case_revision'], job['role'], job['status'],
                     job['attempts'], job['lease_token'], _timestamp(job['lease_expires_at_micros']),
-                    allowed_evidence_ids(db, case_id), facts, db.settings()['policy_version'], AGENT_OUTPUT_SCHEMA)
+                    allowed_evidence_ids(db, case_id) if evidence_ids is None else evidence_ids,
+                    facts, db.settings()['policy_version'], AGENT_OUTPUT_SCHEMA)
 
 
 def heartbeat_job(db: AfterHoursDB, lease: JobLease) -> datetime:

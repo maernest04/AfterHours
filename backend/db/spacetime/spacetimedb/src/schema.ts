@@ -220,7 +220,7 @@ const attachments = table(
   {
     id: t.u64().primaryKey().autoInc(),
     emailId: t.u64().index('btree'),
-    documentId: t.u64(),
+    documentId: t.u64().index('btree'),
   }
 );
 

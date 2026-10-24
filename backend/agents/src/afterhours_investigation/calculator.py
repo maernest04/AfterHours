@@ -4,10 +4,10 @@ import json
 from pathlib import Path
 
 from afterhours_db import AfterHoursDB
-from afterhours_db.tools import AgentTools
 from dotenv import load_dotenv
 
 from .handler import FIELDS, validate_output
+from .indexed_tools import ScopedAgentTools
 
 
 def _coverage(evidence):
@@ -69,7 +69,7 @@ def _coverage(evidence):
 
 
 def build_proposal(db, case_id, expected_revision, *, entry_date):
-    tools = AgentTools(db, case_id)
+    tools = ScopedAgentTools(db, case_id)
     evidence = tools.get_case_evidence()
     if evidence['case']['inputRevision'] != expected_revision:
         raise ValueError('Stale calculator revision')

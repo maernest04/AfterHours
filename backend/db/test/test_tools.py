@@ -16,6 +16,9 @@ class ViewClient:
 
     def query(self, sql):
         prefix = 'SELECT * FROM '
+        if sql.startswith(prefix + 'documents_view WHERE id = '):
+            id = int(sql.rsplit(' = ', 1)[1])
+            return [row for row in self.rows.get('documents_view', []) if row['id'] == id]
         if not sql.startswith(prefix) or ' ' in sql[len(prefix):]:
             raise AssertionError(f'Unexpected query: {sql}')
         return self.rows.get(sql[len(prefix):], [])

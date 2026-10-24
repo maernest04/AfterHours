@@ -99,3 +99,10 @@ class SpacetimeClient:
         if not re.fullmatch(r'[A-Za-z_][A-Za-z_0-9]*', name):
             raise ValueError('Invalid reducer name')
         self._request('POST', self._prefix + '/call/' + name, json=args)
+
+    def call_procedure(self, name: str, args: list[Any]) -> Any:
+        """Call a procedure returning a JSON string (the mailbox access contract)."""
+        if not re.fullmatch(r'[A-Za-z_][A-Za-z_0-9]*', name):
+            raise ValueError('Invalid procedure name')
+        import json
+        return json.loads(self._request('POST', self._prefix + '/call/' + name, json=args).json())
