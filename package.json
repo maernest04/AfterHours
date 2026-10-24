@@ -1,0 +1,25 @@
+{
+  "name": "afterhours",
+  "private": true,
+  "type": "module",
+  "description": "Accrual correction assistant (Cal Hacks 13) - SpacetimeDB document storage",
+  "scripts": {
+    "db:start": "spacetime start",
+    "db:install": "npm --prefix backend/db/spacetime/spacetimedb install",
+    "db:publish": "node --env-file-if-exists=.env scripts/db.mjs publish",
+    "db:reset": "node --env-file-if-exists=.env scripts/db.mjs reset",
+    "db:generate": "node --env-file-if-exists=.env scripts/db.mjs generate",
+    "db:sql": "node --env-file-if-exists=.env scripts/db.mjs sql",
+    "db:seed": "tsx --env-file-if-exists=.env backend/db/seed/seed.ts",
+    "smoke": "tsx --env-file-if-exists=.env backend/db/test/smoke.ts",
+    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p backend/db/spacetime/spacetimedb"
+  },
+  "dependencies": {
+    "spacetimedb": "2.13.*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "~5.6.2"
+  }
+}

@@ -1,0 +1,11 @@
+SYNTHETIC DEMO DOCUMENT - NOT A REAL CONTRACT
+
+MASTER SERVICES AGREEMENT
+Between Northwind Demo Co (SYNTHETIC) and Acme Contracting (SYNTHETIC)
+
+1. Services: hourly contractor services as requested by Northwind project managers.
+2. Hourly rate: $100.00 per hour, effective 2026-01-01.
+3. Invoicing: monthly in arrears; only approved timesheet hours are billable.
+
+Authorized signatory: Dana Whitfield, Controller, Northwind Demo Co (SYNTHETIC)
+Signed: 2025-12-15
