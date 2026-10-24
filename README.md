@@ -19,14 +19,14 @@ company, hourly contractor services, USD. Exporting a CSV does not post an entry
   mocked for this MVP; persisted approval decisions/export remain pending. See [watcher setup](backend/approval_watcher/README.md).
 - Python API: structured file imports, database-backed paginated listing and
   review details/live snapshots. Approved CSV export remains an explicit **501**.
-- Pipeline: Python dispatcher starts accepted imports and runs merged matching
-  and investigation workers through the database queue. Extraction and automatic
-  calculation are not enabled. See [pipeline setup](backend/orchestrator/README.md).
+- Pipeline: Python dispatcher starts accepted imports and runs Bitdeer extraction,
+  Factory matching and investigation through the database queue. Automatic
+  calculation is not enabled. See [pipeline setup](backend/orchestrator/README.md).
 - Frontend: React review workspace with a simulated adapter while full API
   integration is pending. See [frontend setup](frontend/README.md).
 
-Extraction, persisted mock approval decisions, journal CSV export and frontend
-API integration remain separate work. Live agent inference requires Factory
+Automatic calculation, persisted mock approval decisions, journal CSV export and
+frontend API integration remain separate work. Live agent inference requires Bitdeer and Factory
 credentials; replay tests need no model key.
 
 ## Runtime boundaries
@@ -72,10 +72,10 @@ only the database module. There are no generated TypeScript client bindings.
 Start the API with `docker compose up --build -d api`, then open
 `http://localhost:8000/docs`. If that port is occupied, use `API_PORT=8001`.
 Start the ready pipeline stages with `docker compose --profile pipeline up --build -d pipeline`.
-This processes all queued matching/investigation jobs and uses Factory credits.
+This processes all configured extraction/matching/investigation jobs and uses provider credits.
 For a scoped run, use `docker compose --profile pipeline run --rm pipeline afterhours-orchestrate --once --case-id N`.
-Fresh uploads wait at extraction until that worker is merged; no fixture result
-is substituted by the service. The calculator is available separately but is
+Fresh uploads run extraction when `BITDEER_API_KEY` is configured; otherwise they
+wait in its queue. No fixture result is substituted. The calculator is available separately but is
 not automatically scheduled while its integration is still in progress.
 Full setup, environment overrides and persistence details:
 [database handoff](docs/SPACETIMEDB_DOCUMENT_STORAGE_SETUP.md).
@@ -166,7 +166,11 @@ The API tests cover imports, projections, streaming, pagination and the remainin
 export stub. The opt-in HTTP/database flow uses actual persisted records and
 worker implementations with explicitly replayed model decisions, not paid calls:
 
+Run these shared-database tests with live worker containers and host workers stopped.
+An independent watcher could otherwise claim a test case before its replay provider.
+
 ```sh
+docker compose stop pipeline matching
 API_PORT=8001 docker compose -f compose.yaml -f backend/orchestrator/compose.test.yaml run --build --rm pipeline-tests
 ```
 
@@ -179,10 +183,22 @@ AFTERHOURS_FLOW_TESTS=1 AFTERHOURS_API_URL=http://127.0.0.1:8001 \
 ```
 
 For the host command, run the API container first with the same local database/file store.
-The flow checks upload, queued extraction, test-only extraction replay, matching,
+The flow checks upload, queued extraction, the real extraction worker with replayed decisions, matching,
 mock-mail investigation, proposal handoff, HTTP details and SSE. It does not
 claim approval/export E2E coverage. Test records are synthetic and remain local.
 The Docker suite also checks investigation SDK startup with fake credentials and
 no prompt. The pipeline uses writable temporary SDK storage inside its read-only
 container.
+
+Run the opt-in paid flow with the normal Compose configuration:
+
+```sh
+API_PORT=8001 docker compose -f compose.yaml -f backend/orchestrator/compose.test.yaml run --build --rm pipeline-live-tests
+```
+
+This imports one fresh synthetic review, runs Bitdeer extraction and Factory
+matching/investigation, and requires all three persisted results to be `LIVE`.
+The signed amendment is available only in the mock mailbox. The test checks API
+details/SSE and stops at the calculator handoff; it never approves or posts.
+It fails if provider configuration is missing instead of substituting replay.
 Frontend build and test commands are in [frontend/README.md](frontend/README.md).

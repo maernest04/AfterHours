@@ -26,8 +26,8 @@ propose facts and matches but cannot approve, export or change policy. Model
 provider calls belong in Python workers, never inside the database module.
 
 The public API creates structured imports and reads summaries/details with live
-snapshots; export still returns an explicit 501. The pipeline runs merged matching
-and investigation workers; extraction and automatic calculation remain disconnected.
+snapshots; export still returns an explicit 501. The pipeline runs merged extraction,
+matching and investigation workers when their providers are configured; automatic calculation remains disconnected.
 Persisted mock email decisions and journal export remain pending.
 Approval/rejection/questions use email; frontend demo controls simulate that
 channel while the backend is unfinished.
