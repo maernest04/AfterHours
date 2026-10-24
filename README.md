@@ -11,13 +11,16 @@ company, hourly contractor services, USD. Exporting a CSV does not post an entry
   mock mailbox, job queue, leases, bounded retries and evidence-scoped results.
 - Python SDK (`afterhours_db`): typed documents, authenticated queries/reducers,
   parsers, case/mailbox helpers, worker leases and read-only agent tools.
+- Factory Investigation worker and gateway calculator: source-linked rate
+  investigation, background heartbeats and immutable unapproved journal proposals.
+  See the [handoff](backend/agents/INVESTIGATION.md).
 - Python API: four runnable stubs with documented success contracts; valid
   requests return **501 errors** until workflow integration is implemented.
 - Frontend: review-workspace implementation is being developed separately with
   a simulated adapter while the public API is stubbed. See [frontend setup](frontend/README.md).
 
-The calculator, proposals, authoritative human approval, journal CSV backend,
-provider adapters and continuous worker loop remain to be implemented.
+EXTRACTION/MATCHING handlers, authoritative human approval, journal CSV backend
+and public API orchestration remain to be implemented.
 
 ## Runtime boundaries
 
@@ -73,8 +76,8 @@ command deletes database rows; it is not required for normal startup.
 Install into another service with `uv pip install -e backend/db` from the repo
 root. Gateway code uses `AfterHoursDB.connect("gateway")`. Worker code uses a
 persistent WebSocket connection for lease-bearing reducer calls; reads query
-fresh server state over HTTP. There is no subscription cache or background worker
-loop yet.
+fresh server state over HTTP. There is no subscription cache. Investigation has
+a case-scoped polling worker; other role loops remain to build.
 
 ```python
 from afterhours_db import AfterHoursDB, AgentTools, claim_job, list_claimable_jobs
@@ -116,7 +119,8 @@ upload → finalize import → IMPORTED → EXTRACTING → MATCHING
 Structured CSV/JSON is parsed by code. Models propose facts and matches through
 leased jobs; reducers enforce scope and revision checks. Expired jobs are
 requeued by a scheduled sweep; exhausted retries surface `RETRYABLE_ERROR`.
-Proposal construction, human approval and export follow in the next backend phase.
+The gateway calculator then saves a proposal and sets `READY_FOR_REVIEW` or
+`VERIFIED_NO_CHANGE`. Human approval and export remain to build.
 
 ## Demo fixtures
 
@@ -124,7 +128,8 @@ The database seed uses Acme Contracting (`V-ACME`), a posted $7,000 accrual, 70
 approved hours, a $100/hour contract, and an approved $110/hour amendment found
 only through the mock mailbox. It includes distracting, untrusted and other-vendor
 emails to exercise evidence scoping. The intended calculator result is a $7,700
-target and a **$700 adjustment**; calculation itself is not implemented yet.
+target and a **$700 adjustment**; database integration tests verify that result
+using explicitly replayed model decisions.
 
 The frontend handoff has a separate, explicitly simulated Cedar Labs / Acme
 Services fixture with its own dates and account mappings. It is not a live view

@@ -100,8 +100,9 @@ retried: an interrupted request may already have committed. This is a project
 SDK for this module, not an official general-purpose SpacetimeDB SDK.
 
 The browser must call the Python API, never receive service credentials. The
-four review routes remain explicit 501 stubs. Calculator/proposals, questions,
-approvals and exports are not implemented.
+four review routes remain explicit 501 stubs. The gateway calculator saves
+unapproved proposals; see the [handoff](../agents/INVESTIGATION.md). Approval
+decisions, question delivery and exports are not implemented.
 
 ## Layout and verification
 

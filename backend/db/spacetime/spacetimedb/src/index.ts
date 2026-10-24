@@ -230,3 +230,5 @@ export {
   jobsView,
   jobResultsView,
 } from './pipeline';
+
+export { configurePostingPeriod, buildProposal, proposalsView } from './calculator';

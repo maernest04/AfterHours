@@ -282,6 +282,22 @@ const sweepSchedule = table(
   }
 );
 
+export const JournalLine = t.object('JournalLine', {
+  accountCode: t.string(), accountName: t.string(), debitCents: t.string(), creditCents: t.string(),
+});
+
+const postingPeriods = table({ name: 'posting_periods' }, {
+  period: t.string().primaryKey(), open: t.bool(),
+});
+
+const proposals = table({ name: 'proposals' }, {
+  id: t.u64().primaryKey().autoInc(), caseId: t.u64().index('btree'), version: t.u32(),
+  inputRevision: t.u32(), policyVersion: t.string(), originalAmountCents: t.string(),
+  supportedCostCents: t.string(), correctedTargetCents: t.string(), adjustmentCents: t.string(),
+  exportAmountCents: t.string(), entryDate: t.string(), currency: t.string(),
+  journalLines: t.array(JournalLine), evidenceIds: t.array(t.string()), hash: t.string(), createdAt: t.timestamp(),
+});
+
 const spacetimedb = schema({
   moduleOwner,
   settings,
@@ -300,6 +316,8 @@ const spacetimedb = schema({
   jobResults,
   jobPolicy,
   sweepSchedule,
+  postingPeriods,
+  proposals,
 });
 export default spacetimedb;
 export {
@@ -317,4 +335,5 @@ export {
   jobs,
   jobResults,
   sweepSchedule,
+  proposals,
 };

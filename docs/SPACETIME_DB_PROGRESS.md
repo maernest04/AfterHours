@@ -10,7 +10,7 @@ current commands and service integration details.
 
 ## Implemented
 
-- The module has 17 private tables and 14 caller-filtered public views. Owner,
+- The module has 19 private tables and 15 caller-filtered public views. Owner,
   gateway, worker and scheduler authority remain enforced inside reducers.
 - Python owns atomic content-addressed file writes, hash/size-verified reads,
   document metadata/versioning and idempotent uploads. Original bytes stay in
@@ -27,6 +27,11 @@ current commands and service integration details.
 - Python read-only agent tools search vendor mail, read threads and verified
   attachments, extract PDF text with page markers using `pypdf`, and return the
   case's current evidence. LLM contracts keep camelCase and decimal-string IDs.
+- Factory Investigation uses those tools with lease heartbeats and validates
+  source-linked rate/approval facts. The gateway calculator saves immutable,
+  balanced proposals; the database enforces posting periods, revision/policy,
+  evidence scope, invoice capacity and exact monetary arithmetic. See the
+  [handoff](../backend/agents/INVESTIGATION.md) for verification and limitations.
 - The Python CLI supports start/stop, publish/reset, bootstrap, seed, SQL and
   smoke. Root npm database aliases call Python; Node builds/typechecks the module.
 - Docker hosts SpacetimeDB locally on port 3000. Its named volume preserves both
@@ -69,10 +74,10 @@ existing stub/validation contracts, not a completed review workflow.
 - Connect the four Python review API routes; they currently return explicit 501
   responses after validation. The browser must use that API without receiving
   database service credentials.
-- Implement model providers, role handlers/prompts, the long-running worker and
-  orchestration service, including heartbeat scheduling and recovery.
-- Implement the calculator and `build_proposal`, questions/exceptions, reviewer
-  approval decisions, export authorization/finalization and CSV generation.
+- Implement EXTRACTION/MATCHING providers and role handlers, and connect the
+  orchestration service to the case-scoped Investigation worker and calculator.
+- Implement question delivery, reviewer approval decisions, export
+  authorization/finalization and CSV generation.
 - Bump case revisions and invalidate old jobs/proposals when inputs change;
   current checks reject stale revisions, but automatic revision updates and
   cancellation are not implemented.

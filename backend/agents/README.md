@@ -1,8 +1,10 @@
 # Agents
 
 Agents run in a separate Python worker process. The database, job helpers and
-read-only tools are implemented; provider integrations, role handlers, prompts
-and the long-running worker loop remain to build.
+read-only tools are implemented. The Factory Investigation handler, leased worker
+and gateway calculator are implemented; see the [handoff](INVESTIGATION.md) for
+setup, teammate contracts, commands and limitations. EXTRACTION and MATCHING
+handlers remain to build.
 
 - `EXTRACTION` (Bitdeer): extract source-linked facts from contracts, amendments
   and PDFs. Structured CSV/JSON is parsed by code during import.
@@ -96,7 +98,7 @@ are `rate.hourlyCents`, `rate.effectiveFrom`, `rate.effectiveTo`, `rate.approved
 `rate.signedDate`, and `amendment.supersedesRateCents`.
 
 EXTRACTION completion queues MATCHING. MATCHING with unresolved questions queues
-INVESTIGATION; otherwise the case awaits the future `build_proposal` stage.
+INVESTIGATION; otherwise the case awaits the gateway `build_proposal` stage.
 INVESTIGATION with questions still open sets `WAITING_FOR_INPUT`. Expired leases
 are swept and retried; three attempts is the default maximum before
 `RETRYABLE_ERROR`.

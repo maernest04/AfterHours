@@ -5,9 +5,10 @@ the mock mailbox, leased jobs and read-only agent tools. Application tooling is
 Python; the schema/reducers/views remain a TypeScript SpacetimeDB module.
 The four public review API routes remain explicit 501 stubs.
 
-Agent handlers, provider integrations, the worker loop, calculator/proposals,
-questions/exceptions, approvals and exports are still to build. No model API
-keys are needed to seed or test the data layer.
+Factory Investigation, its leased worker and the gateway calculator/proposals
+are implemented; see the [handoff](../backend/agents/INVESTIGATION.md).
+EXTRACTION/MATCHING handlers, question delivery, approvals and exports remain to
+build. No model API keys are needed to seed or test the data layer.
 
 ## Quick start
 
@@ -80,19 +81,20 @@ changes can preserve data; reset is a destructive local-development operation.
 
 ## Schema and authorization
 
-All 17 tables are private:
+All 19 tables are private:
 
 - Configuration: `module_owner`, `settings`, `service_identity`.
 - Documents/import: `documents`, `cases`, `case_documents`.
 - Evidence: `facts`, `work_items`, `invoice_lines`, `ledger_records`, `allocations`.
 - Mailbox: `emails`, `attachments`.
 - Queue: `jobs`, `job_results`, `job_policy`, `sweep_schedule`.
+- Proposals: `posting_periods`, `proposals`.
 
-The 14 public views check the caller's registered identity. They expose
+The 15 public views check the caller's registered identity. They expose
 `documents_view`, `settings_view`, `my_service_identity`, `cases_view`,
 `case_documents_view`, `facts_view`, `work_items_view`, `invoice_lines_view`,
 `ledger_records_view`, `allocations_view`, `emails_view`, `attachments_view`,
-`jobs_view` and `job_results_view`. Unauthorized callers receive no rows.
+`jobs_view`, `job_results_view` and `proposals_view`. Unauthorized callers receive no rows.
 
 Owner reducers configure settings/job policy and register identities. Gateway
 reducers store/version documents, import cases, start reviews and store mailbox
@@ -118,7 +120,7 @@ content within one import is rejected. See the [data pipeline guide](../backend/
 Jobs have a stable case/revision/role key and statuses QUEUED, RUNNING, SUCCEEDED
 or FAILED. Completion advances EXTRACTION → MATCHING → INVESTIGATION when
 questions remain. INVESTIGATION with unanswered questions sets WAITING_FOR_INPUT.
-Otherwise the case awaits the future `build_proposal` stage;
+Otherwise the case awaits the gateway `build_proposal` stage;
 `is_awaiting_proposal` checks this handoff.
 
 Leases default to 30 seconds and are extended by heartbeat. A two-second sweep
