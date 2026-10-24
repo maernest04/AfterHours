@@ -5,8 +5,10 @@ from typing import Annotated
 from fastapi import Depends, FastAPI, File, HTTPException, Query, Request, Response, UploadFile
 from fastapi.responses import JSONResponse, StreamingResponse
 from starlette.concurrency import run_in_threadpool
+from starlette.datastructures import UploadFile as StarletteUploadFile
 
-from .repository import RepositoryUnavailable
+from .repository import RepositoryUnavailable, ReviewConflict, ReviewNotFound
+from .imports import InvalidUpload
 from .service import IntegrationPending, InvalidCursor, ReviewService, ReviewUpload, get_review_service
 
 from .responses import (
@@ -16,7 +18,7 @@ from .responses import (
 
 app = FastAPI(
     title="AfterHours review API", version="0.1.0",
-    description="List summaries are read from SpacetimeDB. Create, detail/live updates and export remain explicit 501 integration stubs.",
+    description="Create reviews and read persisted summaries/details from SpacetimeDB, with polling SSE updates. Approval-checked export remains an explicit 501 integration stub.",
 )
 
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024
@@ -42,22 +44,39 @@ async def repository_unavailable(_: Request, error: RepositoryUnavailable):
 
 
 @app.exception_handler(InvalidCursor)
+@app.exception_handler(InvalidUpload)
 async def invalid_cursor(_: Request, error: InvalidCursor):
     return JSONResponse(status_code=422, content={"detail": str(error)})
 
 
+@app.exception_handler(ReviewConflict)
+async def review_conflict(_: Request, error: ReviewConflict):
+    return JSONResponse(status_code=409, content={"detail": str(error)})
+
+
+@app.exception_handler(ReviewNotFound)
+async def review_not_found(_: Request, error: ReviewNotFound):
+    return JSONResponse(status_code=404, content={"detail": str(error)})
+
+
 @app.post(
     "/create-review", status_code=202, response_model=CreateReviewResponse,
-    responses={**STUB_RESPONSE, 202: {
+    responses={409: {"description": "A review already exists for the accrual source entry."},
+               503: {"description": "Review storage unavailable; import outcome may be uncertain."}, 202: {
         "description": "Files accepted and review created; processing continues asynchronously.",
         "content": {"application/json": {"example": CREATE_EXAMPLE}},
     }},
 )
 async def create_review(
+    request: Request,
     files: Annotated[list[UploadFile], File(min_length=1)],
     service: Service,
 ):
     """Upload supporting documents and start a review in one request."""
+    form = await request.form()
+    if any(key != 'files' or not isinstance(value, StarletteUploadFile)
+           for key, value in form.multi_items()):
+        raise HTTPException(422, 'Only multipart file fields named files are supported.')
     total = 0
     for file in files:
         if file.content_type not in ALLOWED_MEDIA_TYPES:
@@ -89,8 +108,8 @@ async def list_review(
 
 @app.get(
     "/get-review", response_model=GetReviewResponse,
-    responses={**STUB_RESPONSE, 200: {
-        "description": "JSON snapshot by default. With live=true, SSE snapshot then review.updated events; each data payload follows GetReviewResponse. Amounts are integer-cent strings or null while unknown.",
+    responses={503: {"description": "Review storage is unavailable."}, 200: {
+        "description": "JSON snapshot by default. With live=true, polling SSE snapshot then review.updated events; each data payload follows GetReviewResponse. Resume resynchronizes current state; intermediate events are not replayed. Amounts are integer-cent strings or null while unknown.",
         "content": {
             "application/json": {"example": GET_EXAMPLE},
             "text/event-stream": {"schema": {"type": "string"}, "example": SSE_EXAMPLE},
@@ -108,7 +127,9 @@ async def get_review(
         raise HTTPException(422, "after_sequence requires live=true.")
     if live:
         events = await run_in_threadpool(service.stream_review, review_id, after_sequence)
-        return StreamingResponse(events, media_type="text/event-stream")
+        return StreamingResponse(events, media_type="text/event-stream", headers={
+            'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no',
+        })
     return await run_in_threadpool(service.get_review, review_id)
 
 

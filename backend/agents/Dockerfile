@@ -21,5 +21,8 @@ COPY backend/db/src /app/backend/db/src
 COPY backend/agents/pyproject.toml backend/agents/uv.lock /app/backend/agents/
 COPY backend/agents/src /app/backend/agents/src
 RUN uv sync --project backend/agents --frozen --no-dev
+COPY backend/orchestrator/pyproject.toml /app/backend/orchestrator/pyproject.toml
+COPY backend/orchestrator/src /app/backend/orchestrator/src
+RUN uv pip install --python /app/backend/agents/.venv/bin/python --no-deps /app/backend/orchestrator
 ENV PATH="/app/backend/agents/.venv/bin:$PATH" PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1
 CMD ["afterhours-matching"]

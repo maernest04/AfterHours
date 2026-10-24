@@ -1,56 +1,104 @@
 # Orchestrator
 
-The orchestrator will run as a Python service, coordinating the API and model
-workers. `workflows/`, `scheduling/` and `state/` are extension points; a running
-orchestrator is not implemented yet.
+This Python service polls the existing SpacetimeDB workflow. It recovers accepted
+`IMPORTED` cases with `start_review`, then dispatches the merged MATCHING and
+INVESTIGATION workers. Database jobs, leases, revision checks and stage reducers
+remain the only workflow state; there is no second queue or state store.
 
-## Existing database workflow
+Current boundaries are intentional:
 
-The queue and stage transitions already live in the SpacetimeDB module's
-`pipeline.ts`. Reuse these through the Python SDK:
+- EXTRACTION is not implemented on main. Imported cases enter `EXTRACTING` with
+  a queued extraction job and remain there until a real worker is available.
+- Existing extracted fixtures can run MATCHING and, when questions remain,
+  INVESTIGATION. Investigation reads the existing mock mailbox through scoped
+  `AgentTools`; no real email integration or sending is enabled.
+- Resolved cases stop at the proposal handoff. The in-progress calculator is
+  never called by this service. Open questions remain `WAITING_FOR_INPUT`.
+- Every completed model job retains `LIVE` or `REPLAYED` provenance. The service
+  has no automatic replay or synthetic success fallback.
 
-- Jobs move `QUEUED` → `RUNNING` → `SUCCEEDED` or `FAILED`. There is no
-  `CANCELLED` state. A stable case/revision/role key prevents duplicate jobs.
-- `claim_job` atomically assigns a lease and records its connection ID.
-  Heartbeat/completion require the worker identity, current revision, RUNNING
-  status, matching lease token and unexpired lease. They do not separately check
-  connection ownership. Keep one worker SDK connection open throughout the job.
-- Leases default to 30 seconds. A scheduled sweep runs every two seconds,
-  requeues expired work, and fails the job after three attempts, moving the case
-  to `RETRYABLE_ERROR`. `JOB_LEASE_SECONDS` and `JOB_MAX_ATTEMPTS` are applied by
-  `afterhours-db bootstrap`.
-- EXTRACTION completion queues MATCHING. MATCHING queues INVESTIGATION when
-  unresolved questions remain. INVESTIGATION with open questions sets
-  `WAITING_FOR_INPUT`. Otherwise the case awaits the future proposal stage.
-- `afterhours_db.cases.is_awaiting_proposal(db, case_id)` identifies that handoff:
-  the case is MATCHING/INVESTIGATING and every current-revision job succeeded.
+## Run locally
 
-## Worker integration
+From the repository root, after the normal database bootstrap:
 
-Use `AfterHoursDB.connect("worker")` with
-`afterhours_db.jobs.list_claimable_jobs`, `claim_job`, `heartbeat_job` and
-`complete_job`. It keeps a JSON WebSocket for worker reducer calls because a
-claim requires `ctx.connectionId`. Reads use fresh authenticated
-HTTP queries. There are no SDK subscription caches or view-event callbacks;
-poll jobs and case state explicitly. Gateway operations use HTTP.
+```sh
+uv run --project backend/orchestrator afterhours-orchestrate
+```
 
-The [agent README](../agents/README.md) shows the Python integration and model
-contracts. Keep heartbeats running during inference, treat a failed renewal as
-lost ownership, and record real model runs as `LIVE` or fixture replays as
-`REPLAYED`. The backend seed queues one EXTRACTION job on a fresh database.
+The default process polls every two seconds, attempting at most ten queued
+worker jobs per cycle. A bounded, case-scoped invocation is:
 
-## Remaining work
+```sh
+uv run --project backend/orchestrator afterhours-orchestrate --once --case-id 123 --max-jobs 2
+```
 
-- Extraction worker and broader orchestration/concurrency. Investigation has a
-  case-scoped worker in `afterhours_investigation`.
-  MATCHING now has a single-job Python polling loop, independent heartbeats,
-  bounded Factory calls and graceful shutdown in `backend/agents`.
-- API workflow integration; listing works, create/get/export remain explicit 501 stubs.
-- Connect the implemented gateway `build_proposal` calculator to scheduling;
-  clarification/exception handling, authoritative reviewer decisions and CSV export remain.
-- Revision bumps and invalidation when inputs change. Existing revision checks
-  reject stale work, but changing inputs does not yet bump a case revision or
-  cancel its old jobs/proposals automatically.
+`--once` performs one import-recovery pass and at most `--max-jobs` worker
+attempts, then exits. Newly queued investigation jobs can run in the same cycle
+if the budget permits. It exits with status 1 when any attempt or poll fails;
+an unavailable extraction/proposal stage is reported as `blocked`, never as a
+completed job. `--case-id` scopes both import recovery and job dispatch.
 
-Future services must keep database credentials server-side. The frontend calls
-the API; it does not connect to SpacetimeDB with gateway or worker tokens.
+The JSON report contains started case IDs, completed job summaries, errors by
+type, and blocked extraction/proposal handoffs. Exception payloads and model
+output are excluded from service logs.
+
+Required database settings use the existing SDK conventions:
+
+- `SPACETIMEDB_URI`, `SPACETIMEDB_DATABASE`, `COMPANY_ID`
+- `SPACETIMEDB_SECRETS_DIR`: gateway and worker tokens from bootstrap
+- `FILE_STORE_DIR`: the same evidence files written by the API
+
+LIVE jobs additionally need `FACTORY_API_KEY`, `FACTORY_MODEL_ID`, and the
+installed Droid executable (`DROID_EXEC_PATH`, default `droid`). Both worker
+providers reject missing key/model before claiming work. Import recovery works
+without model credentials. Optional `MATCHING_TIMEOUT_SECONDS` (default 120)
+and `INVESTIGATION_TIMEOUT_SECONDS` (default 180) must be positive and at most
+600 seconds; investigation includes provider startup in its deadline.
+
+## Docker
+
+The existing agents Dockerfile installs this package and the pinned Droid CLI:
+
+```sh
+docker build -f backend/agents/Dockerfile -t afterhours-agents .
+```
+
+Use command `afterhours-orchestrate` for the pipeline service, with the database
+network URL and read-only mounts for gateway/worker credentials and evidence
+files. The root Compose configuration supplies these through its `pipeline`
+profile. The same image still supports `afterhours-matching` and
+`afterhours-investigate` separately; avoid starting extra workers unintentionally.
+
+## Recovery and leases
+
+Import creation persists `IMPORTED` before scheduling. Each poll rescans that
+state, so a crash between acceptance and scheduling does not lose work. A failed
+start on one case does not prevent other imports from starting, and subsequent
+polls retry it. Concurrent starts are guarded by the database reducer.
+
+Worker implementations retain their own independent heartbeats and final lease
+checks. A job failure never reports success; the existing database expiry sweep
+requeues expired leases and eventually moves exhausted jobs to `RETRYABLE_ERROR`.
+Jobs that fail before claiming remain queued. Each job is attempted at most once
+per cycle, preventing an immediately failing job from starving other queued jobs.
+The process reconnects each cycle after transport failure. SIGINT/SIGTERM stops
+new work and cancels active inference; abandoned leases recover through expiry.
+
+## Tests and injected providers
+
+```sh
+PYTHONPATH=backend/orchestrator/src backend/agents/.venv/bin/python -m unittest discover -s backend/orchestrator/tests -v
+```
+
+The synchronous `afterhours_orchestrator.pipeline.run_cycle` function accepts
+separate gateway and worker SDK connections, `case_id`, `max_jobs`, and a stop
+event. Tests can inject `matching_provider_factory` (returning a provider whose
+`model_run` is `REPLAYED`) and `investigation_session` (an async context manager
+yielding the decision function), with `investigation_model_run='REPLAYED'`.
+Provider injection runs the existing worker code and database transitions;
+it does not bypass leases or create an extraction implementation.
+
+Offline tests cover scoped import recovery, per-case error isolation, bounded
+dispatch, missing configuration, provider startup deadlines, shutdown and honest
+handoffs. The root integration smoke uses explicit replay fixtures against the
+real local database; ordinary test runs never invoke paid inference.

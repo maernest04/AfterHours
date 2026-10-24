@@ -1,0 +1,23 @@
+# Combine with root compose.yaml; paths resolve relative to the repository root.
+services:
+  pipeline-tests:
+    extends:
+      file: compose.yaml
+      service: pipeline
+    profiles: !override ["tests"]
+    environment:
+      AFTERHOURS_FLOW_TESTS: "1"
+      AFTERHOURS_DROID_TESTS: "1"
+      AFTERHOURS_API_URL: http://api:8000
+      FACTORY_API_KEY: ""
+      FACTORY_MODEL_ID: ""
+    # Test setup writes synthetic mock-mail attachments; production stays read-only.
+    volumes:
+      - ./data/files:/app/data/files
+      - ./backend/tests:/app/backend/tests:ro
+    depends_on:
+      api:
+        condition: service_started
+      spacetimedb:
+        condition: service_healthy
+    command: ["python", "-m", "unittest", "discover", "-s", "backend/tests", "-v"]

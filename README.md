@@ -15,15 +15,18 @@ company, hourly contractor services, USD. Exporting a CSV does not post an entry
   investigation and immutable unapproved journal proposals. See the [handoff](backend/agents/INVESTIGATION.md).
 - Matching worker: Python/Factory handler, output validation, leased polling,
   synthetic fixture seeding and database-backed replay tests. See [agents](backend/agents/README.md).
-- Approval watcher: tested email decision evaluator and mock polling service;
-  authoritative mailbox/storage adapters remain pending. See [watcher setup](backend/approval_watcher/README.md).
-- Python API: database-backed paginated review listing; create/get/export keep
-  explicit **501 errors** until their full workflow contracts are implemented.
+- Approval watcher: email decision evaluator and mock polling service. Email stays
+  mocked for this MVP; persisted approval decisions/export remain pending. See [watcher setup](backend/approval_watcher/README.md).
+- Python API: structured file imports, database-backed paginated listing and
+  review details/live snapshots. Approved CSV export remains an explicit **501**.
+- Pipeline: Python dispatcher starts accepted imports and runs merged matching
+  and investigation workers through the database queue. Extraction and automatic
+  calculation are not enabled. See [pipeline setup](backend/orchestrator/README.md).
 - Frontend: React review workspace with a simulated adapter while full API
   integration is pending. See [frontend setup](frontend/README.md).
 
-Extraction, authoritative human approval, journal CSV export and full workflow
-API integration remain separate work. Live matching inference requires Factory
+Extraction, persisted mock approval decisions, journal CSV export and frontend
+API integration remain separate work. Live agent inference requires Factory
 credentials; replay tests need no model key.
 
 ## Runtime boundaries
@@ -40,8 +43,8 @@ leases and submit evidence-linked results; they cannot approve, export or change
 policy. Owner credentials are reserved for database setup.
 
 Original files live in `data/files/`, referenced by SHA-256. Database records and
-signing keys persist in the `spacetimedb-data` Docker volume. The API and workers
-will share the file-store volume when their integration is implemented.
+signing keys persist in the `spacetimedb-data` Docker volume. The API writes the
+shared file store; worker containers mount it read-only.
 
 ## Local setup
 
@@ -68,6 +71,12 @@ only the database module. There are no generated TypeScript client bindings.
 
 Start the API with `docker compose up --build -d api`, then open
 `http://localhost:8000/docs`. If that port is occupied, use `API_PORT=8001`.
+Start the ready pipeline stages with `docker compose --profile pipeline up --build -d pipeline`.
+This processes all queued matching/investigation jobs and uses Factory credits.
+For a scoped run, use `docker compose --profile pipeline run --rm pipeline afterhours-orchestrate --once --case-id N`.
+Fresh uploads wait at extraction until that worker is merged; no fixture result
+is substituted by the service. The calculator is available separately but is
+not automatically scheduled while its integration is still in progress.
 Full setup, environment overrides and persistence details:
 [database handoff](docs/SPACETIMEDB_DOCUMENT_STORAGE_SETUP.md).
 
@@ -80,8 +89,8 @@ command deletes database rows; it is not required for normal startup.
 Install into another service with `uv pip install -e backend/db` from the repo
 root. Gateway code uses `AfterHoursDB.connect("gateway")`. Worker code uses a
 persistent WebSocket connection for lease-bearing reducer calls; reads query
-fresh server state over HTTP. There is no subscription cache. Investigation has
-a case-scoped polling worker; other role loops remain to build.
+fresh server state over HTTP. There is no subscription cache. The pipeline
+dispatcher runs matching/investigation and recovers accepted imports after restart.
 
 ```python
 from afterhours_db import AfterHoursDB, AgentTools, claim_job, list_claimable_jobs
@@ -123,8 +132,9 @@ upload → finalize import → IMPORTED → EXTRACTING → MATCHING
 Structured CSV/JSON is parsed by code. Models propose facts and matches through
 leased jobs; reducers enforce scope and revision checks. Expired jobs are
 requeued by a scheduled sweep; exhausted retries surface `RETRYABLE_ERROR`.
-The gateway calculator then saves a proposal and sets `READY_FOR_REVIEW` or
-`VERIFIED_NO_CHANGE`. Human approval and export remain to build.
+The separately invoked gateway calculator saves a proposal and sets
+`READY_FOR_REVIEW` or `VERIFIED_NO_CHANGE`. Persisted mock approval and export
+remain to build.
 
 ## Demo fixtures
 
@@ -152,5 +162,27 @@ npm run smoke
 The database smoke suite runs 13 storage checks and 10 pipeline/worker checks
 against the real local server, with synthetic/replayed agent output. It creates
 unique test records and restores the configured lease policy after expiry tests.
-The API tests verify stub behavior and contracts, not a completed accounting flow.
+The API tests cover imports, projections, streaming, pagination and the remaining
+export stub. The opt-in HTTP/database flow uses actual persisted records and
+worker implementations with explicitly replayed model decisions, not paid calls:
+
+```sh
+API_PORT=8001 docker compose -f compose.yaml -f backend/orchestrator/compose.test.yaml run --build --rm pipeline-tests
+```
+
+Or run the same flow from the host against an already-running API:
+
+```sh
+AFTERHOURS_FLOW_TESTS=1 AFTERHOURS_API_URL=http://127.0.0.1:8001 \
+  PYTHONPATH=backend/orchestrator/src \
+  backend/agents/.venv/bin/python -m unittest discover -s backend/tests -v
+```
+
+For the host command, run the API container first with the same local database/file store.
+The flow checks upload, queued extraction, test-only extraction replay, matching,
+mock-mail investigation, proposal handoff, HTTP details and SSE. It does not
+claim approval/export E2E coverage. Test records are synthetic and remain local.
+The Docker suite also checks investigation SDK startup with fake credentials and
+no prompt. The pipeline uses writable temporary SDK storage inside its read-only
+container.
 Frontend build and test commands are in [frontend/README.md](frontend/README.md).

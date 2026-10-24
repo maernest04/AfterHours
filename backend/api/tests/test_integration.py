@@ -116,16 +116,14 @@ class RouteIntegrationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status_code, 503)
         self.assertEqual(response.json()["detail"]["code"], "STORAGE_UNAVAILABLE")
 
-    async def test_pending_operations_do_not_touch_database(self):
-        for path, params in [("/get-review", {"review_id": "1"}),
-                             ("/get-review", {"review_id": "1", "live": True, "after_sequence": "5"}),
-                             ("/export-review", {"review_id": "1"})]:
-            response = await self.client.get(path, params=params)
-            self.assertEqual(response.status_code, 501)
-            self.assertEqual(response.headers["content-type"], "application/json")
-        response = await self.client.post("/create-review", files={"files": ("accrual.csv", b"amount\n7000", "text/csv")})
+    async def test_export_pending_and_invalid_import_do_not_touch_database(self):
+        response = await self.client.get('/export-review', params={'review_id': '1'})
         self.assertEqual(response.status_code, 501)
+        self.assertEqual(response.headers["content-type"], "application/json")
+        response = await self.client.post("/create-review", files={"files": ("accrual.csv", b"amount\n7000", "text/csv")})
+        self.assertEqual(response.status_code, 422)
         self.repository.list_reviews.assert_not_called()
+        self.repository.create_review.assert_not_called()
 
 
 if __name__ == "__main__":

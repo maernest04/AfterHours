@@ -100,7 +100,7 @@ retried: an interrupted request may already have committed. This is a project
 SDK for this module, not an official general-purpose SpacetimeDB SDK.
 
 The browser must call the Python API, never receive service credentials. The
-review listing reads this SDK; create/get/export remain explicit 501 stubs. The gateway calculator saves
+review create/list/get routes use this SDK; export remains an explicit 501 stub. The gateway calculator saves
 unapproved proposals; see the [handoff](../agents/INVESTIGATION.md). Approval
 decisions, question delivery and exports are not integrated. The approval watcher's
 tested evaluator currently uses explicit mock storage, not authoritative database writes.

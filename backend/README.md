@@ -25,9 +25,10 @@ Reducers enforce caller, company, revision, lease and evidence checks. Agents ma
 propose facts and matches but cannot approve, export or change policy. Model
 provider calls belong in Python workers, never inside the database module.
 
-The public API lists reviews from the SDK; create/get/export still return explicit
-501 errors. Matching and investigation workers and a gateway calculator are present.
-Connecting the full workflow, authoritative email decisions and journal export remain pending.
+The public API creates structured imports and reads summaries/details with live
+snapshots; export still returns an explicit 501. The pipeline runs merged matching
+and investigation workers; extraction and automatic calculation remain disconnected.
+Persisted mock email decisions and journal export remain pending.
 Approval/rejection/questions use email; frontend demo controls simulate that
 channel while the backend is unfinished.
 

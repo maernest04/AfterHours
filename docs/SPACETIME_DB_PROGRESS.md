@@ -76,8 +76,9 @@ existing stub/validation contracts, not a completed review workflow.
   The browser must use that API without receiving database credentials.
 - Implement extraction and broader orchestration. Matching now has a Factory
   adapter, validated handler, heartbeats, polling worker and Docker/replay E2E.
-  Investigation and gateway proposals are implemented; live matching quality
-  verification remains pending Factory configuration.
+  Investigation and gateway proposals are implemented. The six synthetic matching
+  scenarios passed live Factory evaluation with `gpt-6-luna-fast`; broader quality
+  evaluation and full review-flow integration remain.
 - Implement question delivery, reviewer decisions, export authorization and CSV generation.
 - Bump case revisions and invalidate old jobs/proposals when inputs change;
   current checks reject stale revisions, but automatic revision updates and

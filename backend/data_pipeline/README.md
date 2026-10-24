@@ -66,15 +66,16 @@ def import_case(db, document_ids, metadata, import_key):
 
 Use a gateway connection. Keep `import_key` stable across retries; it is distinct
 from each document's upload key. `finalize_import` generates a key if omitted.
-The seed demonstrates deriving metadata from `parse_accrual`; production API
-inference and handling ambiguous uploaded metadata are not implemented.
+The API derives metadata from one fully specified accrual JSON and classifies
+supported CSV/text formats before uploading. Ambiguous formats are rejected.
 
 ## Remaining integration
 
-Review listing reads the database; create/get/export remain explicit 501 stubs. Wire `create-review`
-to uploads, metadata extraction, `finalize_import` and `start_review`. Add real
-source connectors, structured PDF extraction and replay/freshness policies when
-those sources are introduced. The mock mailbox and backend Acme fixture are
+Create persists files and an imported case; the pipeline recovers imports with
+`start_review` and dispatches merged matching/investigation workers. Get/list read
+stored state, including polling live snapshots. Extraction, automatic calculation,
+persisted mock approval and export remain pending. PDF extraction and input-revision
+invalidation also remain separate work. The mock mailbox and backend Acme fixture are
 synthetic; the frontend Cedar scenario is separate.
 
 See [database setup](../../docs/SPACETIMEDB_DOCUMENT_STORAGE_SETUP.md) and
