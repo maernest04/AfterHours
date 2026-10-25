@@ -7,10 +7,8 @@ import {
   XCircle,
   RefreshCw,
 } from "lucide-react";
-import type { CaseSnapshot } from "../data/reviewAdapter";
+import type { CaseSnapshot, ReviewAdapter } from "../data/reviewAdapter";
 import { canExport, journalText, money } from "../data/reviewAdapter";
-import type { ReviewAdapter } from "../data/reviewAdapter";
-import { CASE_ID } from "../data/fixtures";
 export function ReviewPanel({
   snapshot: s,
   adapter,
@@ -47,7 +45,7 @@ export function ReviewPanel({
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `${CASE_ID}-V${p.version}.csv`;
+    a.download = `${s.caseId}-V${p.version}.csv`;
     a.click();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
@@ -95,7 +93,9 @@ export function ReviewPanel({
           {stale
             ? "Stale proposal"
             : s.approvedVersion === p.version
-              ? "Demo approval recorded"
+              ? s.connection === "demo"
+                ? "Demo approval recorded"
+                : "Posted to QuickBooks"
               : "Human review required"}
         </span>
       </div>
@@ -124,7 +124,7 @@ export function ReviewPanel({
       <div className="table-scroll">
         <table className="journal-table">
           <caption>
-            September 30, 2026 · {CASE_ID}-V{p.version}
+            September 30, 2026 · {s.caseId}-V{p.version}
           </caption>
           <thead>
             <tr>
@@ -147,8 +147,9 @@ export function ReviewPanel({
         </table>
       </div>
       <p className="small muted">
-        Generic journal-entry format. Account and column mapping may be
-        required. Exporting does not post an entry.
+        {s.connection === "demo"
+          ? "Generic journal-entry format. Account and column mapping may be required. Exporting does not post an entry."
+          : "Approve binds this proposal hash and posts the journal through the gateway. The browser never talks to QuickBooks."}
       </p>
       {s.rejectionReason && (
         <div className="notice rust">
@@ -175,8 +176,17 @@ export function ReviewPanel({
         </div>
       )}
       <div className="review-identity">
-        Taylor Morgan · demo reviewer{" "}
-        <span>Simulated email actions; no email is sent.</span>
+        {s.connection === "demo" ? (
+          <>
+            Taylor Morgan · demo reviewer{" "}
+            <span>Simulated email actions; no email is sent.</span>
+          </>
+        ) : (
+          <>
+            Live reviewer{" "}
+            <span>Approve posts case {s.caseId} to QuickBooks.</span>
+          </>
+        )}
       </div>
       <div className="review-actions">
         <button
@@ -297,18 +307,23 @@ export function ReviewPanel({
           onFocus={(e) => e.target.select()}
         />
       )}{" "}
-      {["rejected", "approved", "exported"].includes(s.status) && (
+      {s.connection === "demo" &&
+        ["rejected", "approved", "exported"].includes(s.status) &&
+        adapter.revise && (
         <button
           className="text-button revision-button"
           onClick={() => {
             setCopy("");
             setFallback("");
-            adapter.revise();
+            adapter.revise?.();
           }}
         >
           <RefreshCw size={14} />
           Simulate revised evidence · requires fresh approval
         </button>
+      )}
+      {s.status === "approved" && s.connection !== "demo" && (
+        <p className="success">Posted to QuickBooks</p>
       )}
     </section>
   );

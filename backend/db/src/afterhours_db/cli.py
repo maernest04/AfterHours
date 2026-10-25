@@ -1,6 +1,7 @@
 """Run from the repository root. Installs with `uv sync --project backend/db`."""
 import argparse
 import json
+import os
 from pathlib import Path
 import subprocess
 
@@ -15,8 +16,14 @@ from .seed import seed
 def main():
     parser = argparse.ArgumentParser(description='AfterHours Python database tools')
     subcommands = parser.add_subparsers(dest='command', required=True)
-    for name in ('start', 'stop', 'bootstrap', 'seed', 'smoke'):
-        subcommands.add_parser(name)
+    for name in ('start', 'stop', 'bootstrap', 'seed', 'smoke', 'intuit-import', 'intuit-post'):
+        command = subcommands.add_parser(name)
+        if name == 'intuit-import':
+            command.add_argument('--period', default=None)
+            command.add_argument('--start-review', action='store_true')
+        if name == 'intuit-post':
+            command.add_argument('--case-id', type=int, required=True)
+            command.add_argument('--approve-hash', default=None)
     for name in ('publish', 'reset'):
         command = subcommands.add_parser(name)
         command.add_argument('--module-path', default='backend/db/spacetime/spacetimedb')
@@ -42,6 +49,12 @@ def main():
         bootstrap(config)
     elif args.command == 'seed':
         seed(config)
+    elif args.command == 'intuit-import':
+        from .intuit import import_qbo
+        import_qbo(config, args.period or os.getenv('INTUIT_PERIOD', '2026-09'), start=args.start_review)
+    elif args.command == 'intuit-post':
+        from .intuit import post_proposal
+        post_proposal(config, args.case_id, args.approve_hash)
     elif args.command == 'smoke':
         from .smoke import run as storage_checks
         from .pipeline_smoke import run as pipeline_checks

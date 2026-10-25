@@ -58,6 +58,7 @@ export interface Proposal {
   evidenceIds: string[];
   lines: JournalLine[];
   valid: boolean;
+  hash?: string;
 }
 export interface ReviewEvent {
   id: string;

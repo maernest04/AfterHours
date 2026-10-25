@@ -15,7 +15,7 @@ import { EvidenceViewer } from "./components/EvidenceViewer";
 import { ReviewPanel } from "./components/ReviewPanel";
 import { MockReviewAdapter } from "./data/mockReviewAdapter";
 import { ApiReviewAdapter } from "./data/apiReviewAdapter";
-import { CASE_ID, variants } from "./data/fixtures";
+import { variants } from "./data/fixtures";
 import { steps } from "./data/topology";
 import {
   acceptSnapshot,
@@ -36,6 +36,10 @@ const statusLabels: Record<CaseSnapshot["status"], string> = {
   verified: "Verified — no change",
   blocked: "Review blocked",
 };
+function statusText(status: CaseSnapshot["status"], live: boolean) {
+  if (live && status === "approved") return "Approved · posted to QuickBooks";
+  return statusLabels[status];
+}
 export default function App({
   providedAdapter,
 }: {
@@ -46,6 +50,7 @@ export default function App({
       ? new ApiReviewAdapter(import.meta.env.VITE_REVIEW_ID, import.meta.env.VITE_API_URL || "/api")
       : new MockReviewAdapter()
   ));
+  const live = adapter.mode === "api";
   // Copy: the adapter mutates its own snapshot, so sharing it would make acceptSnapshot
   // see every update as stale and skip re-rendering.
   const [snapshot, setSnapshot] = useState<CaseSnapshot>(() => structuredClone(adapter.snapshot));
@@ -96,6 +101,7 @@ export default function App({
   const proposal = snapshot.proposal;
   const stale = proposal && proposal.inputRevision !== snapshot.inputRevision;
   const reset = (variant = snapshot.variant) => {
+    if (!(adapter instanceof MockReviewAdapter)) return;
     adapter.reset(variant);
     setEvidence(null);
     setError("");
@@ -133,7 +139,7 @@ export default function App({
           </button>
         </nav>
         <div className="company">
-          <strong>Cedar Labs</strong>
+          <strong>{live ? `Case ${snapshot.caseId}` : "Cedar Labs"}</strong>
           <span>September 2026</span>
         </div>
         <span className="avatar" aria-label="Taylor Morgan, demo reviewer">
@@ -143,18 +149,31 @@ export default function App({
       <div className="demo-banner">
         <span>
           <Radio size={13} />
-          <strong>{adapter.mode === "api" ? "Connected review" : "Synthetic demo"}</strong>
-          {adapter.mode === "api" ? " · backend pipeline" : " · deterministic replay · no live agents or email"}
+          {live ? (
+            <>
+              <strong>Live review</strong> · case {snapshot.caseId} · Approve
+              posts to QuickBooks
+            </>
+          ) : (
+            <>
+              <strong>Synthetic demo</strong> · deterministic replay · no live
+              agents or email
+            </>
+          )}
         </span>
         <span className="connection">
           <i />
-          {adapter.mode === "api" ? "Review API connected" : "Mock adapter connected"}
+          {live
+            ? snapshot.connection === "connected"
+              ? "Gateway connected"
+              : snapshot.connection
+            : "Mock adapter connected"}
         </span>
       </div>
       <main>
         <div className="page-heading">
           <div className="page-context">
-            Reviews <ChevronRight size={13} /> {CASE_ID}
+            Reviews <ChevronRight size={13} /> {snapshot.caseId}
           </div>
           <div className="title-row">
             <div>
@@ -165,9 +184,13 @@ export default function App({
               </h1>
               <p>
                 {screen === "overview"
-                  ? "One synthetic case, with a complete evidence trail."
-                  : "Acme Services"}
-                {screen === "review" && (
+                  ? live
+                    ? `Case ${snapshot.caseId} from the gateway.`
+                    : "One synthetic case, with a complete evidence trail."
+                  : live
+                    ? `Case ${snapshot.caseId}`
+                    : "Acme Services"}
+                {screen === "review" && !live && (
                   <>
                     <span className="divider">/</span>September services
                     <span className="divider">/</span>
@@ -196,7 +219,7 @@ export default function App({
           <section className="overview-panel">
             <div className="section-heading">
               <h2>September 2026</h2>
-              <span className="pill">1 synthetic case</span>
+              <span className="pill">{live ? "Live case" : "1 synthetic case"}</span>
             </div>
             <div className="table-scroll">
               <table>
@@ -212,16 +235,16 @@ export default function App({
                 <tbody>
                   <tr>
                     <td>
-                      <strong>Acme Services</strong>
-                      <small>Cedar Labs</small>
+                      <strong>{live ? `Case ${snapshot.caseId}` : "Acme Services"}</strong>
+                      <small>{live ? "QuickBooks sandbox" : "Cedar Labs"}</small>
                     </td>
-                    <td className="mono">{CASE_ID}</td>
+                    <td className="mono">{snapshot.caseId}</td>
                     <td>
                       {money(snapshot.original)} <small>Already posted</small>
                     </td>
                     <td>
                       <span className="pill">
-                        {statusLabels[snapshot.status]}
+                        {statusText(snapshot.status, live)}
                       </span>
                     </td>
                     <td>
@@ -245,7 +268,7 @@ export default function App({
                 <strong>{money(snapshot.original)}</strong>
                 <small>
                   <span className="tiny-dot" />
-                  Already posted · JE-0098
+                  {live ? "Already posted" : "Already posted · JE-0098"}
                 </small>
               </div>
               <div>
@@ -281,7 +304,7 @@ export default function App({
               <div className="status-summary">
                 <span>Case status</span>
                 <strong className={`case-status ${snapshot.status}`}>
-                  {statusLabels[snapshot.status]}
+                  {statusText(snapshot.status, live)}
                 </strong>
                 <small>
                   {snapshot.status === "review"
@@ -290,10 +313,15 @@ export default function App({
                       ? "Demo playback paused"
                       : snapshot.status === "ready"
                         ? "Start the deterministic demo below"
-                        : "Synthetic · replayed workflow"}
+                        : live
+                          ? snapshot.status === "approved"
+                            ? "Posted through the gateway"
+                            : "Live case from the gateway"
+                          : "Synthetic · replayed workflow"}
                 </small>
               </div>
             </section>
+            {!live && (
             <div className="playback-bar">
               <div className="fixture-picker">
                 <span>Demo playback</span>
@@ -323,7 +351,9 @@ export default function App({
                     <button
                       className="secondary"
                       disabled={snapshot.status !== "running"}
-                      onClick={() => adapter.pause()}
+                      onClick={() => {
+                        if (adapter instanceof MockReviewAdapter) adapter.pause();
+                      }}
                     >
                       {snapshot.paused ? (
                         <Play size={14} />
@@ -349,11 +379,13 @@ export default function App({
                 </button>
               </div>
             </div>
+            )}
             {snapshot.blocker && (
               <div className="notice amber" role="status">
-                <strong>{statusLabels[snapshot.status]}</strong>
+                <strong>{statusText(snapshot.status, live)}</strong>
                 <p>{snapshot.blocker}</p>
-                {snapshot.status === "waiting" && (
+                {snapshot.status === "waiting" &&
+                  adapter instanceof MockReviewAdapter && (
                   <button
                     className="secondary"
                     onClick={() => adapter.revise()}
@@ -533,7 +565,9 @@ export default function App({
             entries.
           </span>
           <span>
-            Synthetic company · demo reviewer · no production identity controls
+            {live
+              ? "Live review · hash-bound approval posts through the gateway"
+              : "Synthetic company · demo reviewer · no production identity controls"}
           </span>
         </footer>
       </main>

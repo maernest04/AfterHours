@@ -87,8 +87,9 @@ function checkpointFor(api: ApiReview): ReviewEvent {
   return { id: `${api.review_id}:checkpoint:${api.status}`, time: api.updated_at, actor, action, outcome, evidenceIds: [] };
 }
 
-function mapSnapshot(api: ApiReview, revision: number): CaseSnapshot {
-  const status = statusFor(api.status);
+function mapSnapshot(api: ApiReview, revision: number, postedHash: string | null = null): CaseSnapshot {
+  const posted = postedHash !== null && postedHash === api.proposal_hash;
+  const status = posted ? "approved" : statusFor(api.status);
   const proposal = api.proposal_id && api.corrected_target_cents && api.difference_cents
     ? {
         version: 1,
@@ -107,7 +108,8 @@ function mapSnapshot(api: ApiReview, revision: number): CaseSnapshot {
           currency: line.currency,
           description: line.description,
         })),
-        valid: true,
+        valid: api.blockers.length === 0,
+        hash: api.proposal_hash ?? undefined,
       }
     : null;
   return {
@@ -118,7 +120,7 @@ function mapSnapshot(api: ApiReview, revision: number): CaseSnapshot {
     status,
     original: api.original_amount_cents ?? "0",
     originalStatus: api.original_status ?? "POSTED",
-    nodeStates: nodesFor(api.status, api.blockers),
+    nodeStates: nodesFor(posted ? "APPROVED" : api.status, api.blockers),
     transitions: ["NEEDS_REVISION", "RETRYABLE_ERROR", "FAILED"].includes(api.status) ? [] : transitionsFor(api.status),
     events: api.history.map((event, index) => ({
       id: `${api.review_id}:${event.timestamp}:${index}`,
@@ -129,7 +131,7 @@ function mapSnapshot(api: ApiReview, revision: number): CaseSnapshot {
       evidenceIds: event.evidence_ids,
     })),
     proposal,
-    approvedVersion: status === "approved" || status === "exported" ? 1 : null,
+    approvedVersion: posted || status === "approved" || status === "exported" ? 1 : null,
     exportEligible: false,
     pendingQuestion: api.blockers.some((blocker) => /question/i.test(blocker)),
     answer: null,
@@ -147,6 +149,9 @@ export class ApiReviewAdapter implements ReviewAdapter {
   private revision = 0;
   private readonly api: ReviewApi;
   private readonly checkpoints = new Map<string, ReviewEvent>();
+  private latest: ApiReview | null = null;
+  private postedHash: string | null = null;
+  private emit: ((snapshot: CaseSnapshot) => void) | null = null;
 
   constructor(private readonly reviewId: string, baseUrl = "/api") {
     this.api = new ReviewApi(baseUrl);
@@ -176,14 +181,10 @@ export class ApiReviewAdapter implements ReviewAdapter {
 
   subscribeCase(id: string, onSnapshot: (snapshot: CaseSnapshot) => void) {
     if (id !== this.reviewId) throw new Error("Review not found.");
+    this.emit = onSnapshot;
     return this.api.subscribe(id, (review) => {
-      const next = mapSnapshot(review, ++this.revision);
-      const checkpoint = checkpointFor(review);
-      this.checkpoints.set(checkpoint.id, checkpoint);
-      next.events = [...next.events, ...this.checkpoints.values()]
-        .sort((a, b) => a.time.localeCompare(b.time));
-      Object.assign(this.snapshot, next);
-      onSnapshot(structuredClone(this.snapshot));
+      this.latest = review;
+      this.push(review, onSnapshot);
     }, (connection, message) => {
       this.snapshot.connection = connection === "connected" ? "connected" : connection === "error" ? "error" : "connecting";
       if (message) this.snapshot.blocker = message;
@@ -191,9 +192,25 @@ export class ApiReviewAdapter implements ReviewAdapter {
     });
   }
 
+  private push(review: ApiReview, onSnapshot: (snapshot: CaseSnapshot) => void) {
+    const next = mapSnapshot(review, ++this.revision, this.postedHash);
+    const checkpoint = checkpointFor(review);
+    this.checkpoints.set(checkpoint.id, checkpoint);
+    next.events = [...next.events, ...this.checkpoints.values()]
+      .sort((a, b) => a.time.localeCompare(b.time));
+    Object.assign(this.snapshot, next);
+    onSnapshot(structuredClone(this.snapshot));
+  }
+
   async startReview(id: string) { if (id !== this.reviewId) throw new Error("Review not found."); }
   async askQuestion() { throw new Error("Questions are not exposed by the backend yet."); }
-  async approve() { throw new Error("Approval is not exposed by the backend yet."); }
+  async approve(caseId: string, _proposalVersion: number) {
+    const hash = this.latest?.proposal_hash;
+    if (caseId !== this.reviewId || !hash) throw new Error("The current proposal is not available for a decision.");
+    await this.api.approve(caseId, hash);
+    this.postedHash = hash;
+    if (this.latest && this.emit) this.push(this.latest, this.emit);
+  }
   async reject() { throw new Error("Rejection is not exposed by the backend yet."); }
   async getEvidence(evidenceId: string): Promise<EvidenceRecord> {
     const review = await this.api.get(this.reviewId);

@@ -7,7 +7,12 @@ import { buildDemoPackage, type DemoScenario } from "./data/demoPackage";
 const apiBase = import.meta.env.VITE_API_URL || "/api";
 
 export default function ConnectedApp() {
-  const [reviewId, setReviewId] = useState(import.meta.env.VITE_REVIEW_ID || "");
+  const [reviewId, setReviewId] = useState(() => {
+    const fromEnv = import.meta.env.VITE_REVIEW_ID || "";
+    if (fromEnv) return fromEnv;
+    const fromQuery = new URLSearchParams(window.location.search).get("review") || "";
+    return /^[1-9][0-9]{0,19}$/.test(fromQuery) ? fromQuery : "";
+  });
   const [files, setFiles] = useState<File[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");

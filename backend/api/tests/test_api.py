@@ -44,6 +44,8 @@ class ReviewApiTests(unittest.IsolatedAsyncioTestCase):
             with self.subTest(path=path, params=params):
                 self.assertEqual((await self.client.get(path, params=params)).status_code, 422)
         self.assertEqual((await self.client.post('/create-review')).status_code, 422)
+        self.assertEqual((await self.client.post('/approve-review')).status_code, 422)
+        self.assertEqual((await self.client.post('/approve-review', json={'review_id': '1'})).status_code, 422)
 
     async def test_upload_rejects_empty_unsupported_and_oversized_files(self):
         for content, media_type, expected in [
@@ -89,10 +91,18 @@ class ReviewApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('Content-Disposition', export['200']['headers'])
         self.assertIn('501', export)
         self.assertNotIn('success', export['501']['description'].lower())
+        approve = document['paths']['/approve-review']['post']['responses']
+        self.assertIn('200', approve)
+        self.assertIn('example', approve['200']['content']['application/json'])
+        self.assertIn('409', approve)
+        self.assertIn('502', approve)
+        self.assertNotIn('501', approve)
 
-    async def test_no_approval_question_settings_or_separate_updates_routes(self):
+    async def test_no_question_settings_or_separate_updates_routes(self):
         paths = (await self.client.get('/openapi.json')).json()['paths']
-        self.assertEqual(set(paths), {'/create-review', '/list-review', '/get-review', '/export-review'})
+        self.assertEqual(set(paths), {
+            '/create-review', '/list-review', '/get-review', '/export-review', '/approve-review',
+        })
 
 
 if __name__ == '__main__':

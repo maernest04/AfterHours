@@ -1,5 +1,5 @@
 /** Transport for the implemented Python review API.
- * The browser can create and observe reviews; approval/export actions remain server-side.
+ * Demo UI never posts. Connected Approve sends the current proposal hash through the gateway.
  */
 export interface ApiJournalLine {
   entry_date: string;
@@ -98,6 +98,24 @@ export class ReviewApi {
     return (
       await this.request(`get-review?${new URLSearchParams({ review_id: id })}`)
     ).json();
+  }
+  async approve(reviewId: string, proposalHash: string) {
+    return (
+      await this.request("approve-review", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          review_id: reviewId,
+          proposal_hash: proposalHash,
+        }),
+      })
+    ).json() as Promise<{
+      review_id: string;
+      proposal_hash: string;
+      posted: boolean;
+      already_posted: boolean;
+      qbo_id: string | null;
+    }>;
   }
   async export(id: string): Promise<Blob> {
     return (

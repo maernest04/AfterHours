@@ -20,6 +20,19 @@ class ResponseModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class ApproveReviewRequest(ResponseModel):
+    review_id: str = Field(min_length=1, pattern=r"^[1-9][0-9]{0,19}$")
+    proposal_hash: str = Field(min_length=1, max_length=128)
+
+
+class ApproveReviewResponse(ResponseModel):
+    review_id: str
+    proposal_hash: str
+    posted: bool
+    already_posted: bool
+    qbo_id: str | None
+
+
 class CreateReviewResponse(ResponseModel):
     review_id: str = Field(min_length=1, description="Generated and persisted by the data plane.")
     idempotency_key: str = Field(min_length=1, description="Generated and persisted by the data plane; not a request field.")
@@ -115,6 +128,10 @@ CSV_EXAMPLE = (
     "2026-10-23,review-1,6000,Contractor expense,700.00,0.00,USD,Synthetic accrual correction\r\n"
     "2026-10-23,review-1,2100,Accrued liabilities,0.00,700.00,USD,Synthetic accrual correction\r\n"
 )
+APPROVE_EXAMPLE = {
+    "review_id": "1", "proposal_hash": "sha256:example", "posted": True,
+    "already_posted": False, "qbo_id": "146",
+}
 STUB_RESPONSE = {
     501: {"description": "Not implemented yet. This operation's integration is pending.",
           "content": {"application/json": {"example": {"detail": {

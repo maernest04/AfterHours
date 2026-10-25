@@ -69,6 +69,26 @@ describe("real Python route transport (not activated in demo)", () => {
       undefined,
     );
   });
+  it("posts hash-bound approval to the gateway", async () => {
+    const fetcher = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          review_id: "1",
+          proposal_hash: "abc",
+          posted: true,
+          already_posted: false,
+          qbo_id: "146",
+        }),
+      ),
+    );
+    vi.stubGlobal("fetch", fetcher);
+    await new ReviewApi("/api").approve("1", "abc");
+    expect(fetcher).toHaveBeenCalledWith("/api/approve-review", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ review_id: "1", proposal_hash: "abc" }),
+    });
+  });
   it("rehydrates after disconnect, deduplicates snapshots and uses the same get route", async () => {
     vi.useFakeTimers();
     vi.stubGlobal("EventSource", FakeEventSource);

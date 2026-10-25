@@ -9,9 +9,13 @@ from typing import AsyncIterator, BinaryIO, Sequence
 
 from starlette.concurrency import run_in_threadpool
 
-from .repository import ReviewRepository, SDKReviewRepository
+from httpx import HTTPError
+
+from .repository import ReviewConflict, ReviewRepository, SDKReviewRepository
 from .imports import prepare_import
-from .responses import CreateReviewResponse, GetReviewResponse, ListReviewResponse
+from .responses import (
+    ApproveReviewResponse, CreateReviewResponse, GetReviewResponse, ListReviewResponse,
+)
 
 
 class IntegrationPending(RuntimeError):
@@ -21,6 +25,10 @@ class IntegrationPending(RuntimeError):
 
 
 class InvalidCursor(ValueError):
+    pass
+
+
+class PostFailed(RuntimeError):
     pass
 
 
@@ -59,8 +67,9 @@ def _decode_cursor(cursor: str | None) -> int:
 
 
 class ReviewService:
-    def __init__(self, repository: ReviewRepository):
+    def __init__(self, repository: ReviewRepository, post_intuit=None):
         self.repository = repository
+        self.post_intuit = post_intuit
 
     def create_review(self, files: Sequence[ReviewUpload]) -> CreateReviewResponse:
         return self.repository.create_review(prepare_import(files))
@@ -104,6 +113,38 @@ class ReviewService:
                     yield b': keep-alive\n\n'
 
         return events()
+
+    def approve_review(self, review_id: str, proposal_hash: str) -> ApproveReviewResponse:
+        if not re.fullmatch(r'[1-9][0-9]{0,19}', review_id) or int(review_id) >= 2**64:
+            raise InvalidCursor('review_id must be a positive decimal case ID.')
+        if not proposal_hash or not proposal_hash.strip() or len(proposal_hash) > 128:
+            raise InvalidCursor('proposal_hash is required.')
+        review = self.get_review(review_id)
+        if review.blockers:
+            raise ReviewConflict('Blockers remain; approval cannot post.')
+        if not review.proposal_hash or not review.proposal_id:
+            raise ReviewConflict('No current proposal to approve.')
+        if proposal_hash != review.proposal_hash:
+            raise ReviewConflict('proposal_hash does not match the current proposal.')
+        if review.status not in {'READY_FOR_REVIEW', 'APPROVED', 'EXPORTED'}:
+            raise ReviewConflict('Proposal is not ready for approval.')
+        if int(review.export_amount_cents or '0') == 0:
+            raise ReviewConflict('Proposal has no journal to post.')
+        poster = self.post_intuit
+        if poster is None:
+            from afterhours_db.config import DatabaseConfig
+            from afterhours_db.intuit import post_proposal
+            def poster(case_id, approve_hash):
+                return post_proposal(DatabaseConfig.from_env(), case_id, approve_hash)
+        try:
+            result = poster(int(review_id), proposal_hash)
+        except (HTTPError, RuntimeError, ValueError, OSError):
+            raise PostFailed('QuickBooks rejected the journal.') from None
+        return ApproveReviewResponse(
+            review_id=review_id, proposal_hash=proposal_hash,
+            posted=bool(result.get('posted')), already_posted=bool(result.get('already_posted')),
+            qbo_id=None if result.get('qbo_id') is None else str(result.get('qbo_id')),
+        )
 
     def export_review(self, review_id: str) -> ReviewCSV:
         # TODO: require current revision/hash-bound email approval and no blockers.

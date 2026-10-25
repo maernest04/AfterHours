@@ -8,9 +8,9 @@ from unittest.mock import MagicMock
 import httpx
 
 from backend.api.main import app
-from backend.api.repository import RepositoryUnavailable, SDKReviewRepository
-from backend.api.responses import ReviewSummary
-from backend.api.service import InvalidCursor, ReviewService, get_review_service
+from backend.api.repository import RepositoryUnavailable, ReviewConflict, SDKReviewRepository
+from backend.api.responses import GET_EXAMPLE, GetReviewResponse, ReviewSummary
+from backend.api.service import InvalidCursor, PostFailed, ReviewService, get_review_service
 
 
 def summary(review_id):
@@ -49,6 +49,33 @@ class ServiceTests(unittest.TestCase):
             with self.subTest(cursor=cursor), self.assertRaises(InvalidCursor):
                 service.list_reviews(cursor=cursor)
         repository.list_reviews.assert_not_called()
+
+    def test_approve_posts_bound_hash_and_rejects_unready_cases(self):
+        repository = MagicMock()
+        posted = MagicMock(return_value={'posted': True, 'already_posted': False, 'qbo_id': '146'})
+        service = ReviewService(repository, post_intuit=posted)
+        def review(**overrides):
+            return GetReviewResponse.model_validate({**GET_EXAMPLE, **overrides})
+        repository.get_review.return_value = review(blockers=['Missing support'])
+        with self.assertRaises(ReviewConflict):
+            service.approve_review('1', 'sha256:example')
+        repository.get_review.return_value = review(proposal_hash='other')
+        with self.assertRaises(ReviewConflict):
+            service.approve_review('1', 'sha256:example')
+        repository.get_review.return_value = review(status='EXTRACTING')
+        with self.assertRaises(ReviewConflict):
+            service.approve_review('1', 'sha256:example')
+        repository.get_review.return_value = review(export_amount_cents='0')
+        with self.assertRaises(ReviewConflict):
+            service.approve_review('1', 'sha256:example')
+        posted.assert_not_called()
+        repository.get_review.return_value = review()
+        result = service.approve_review('1', 'sha256:example')
+        posted.assert_called_once_with(1, 'sha256:example')
+        self.assertEqual((result.posted, result.already_posted, result.qbo_id), (True, False, '146'))
+        posted.side_effect = RuntimeError('qb')
+        with self.assertRaises(PostFailed):
+            service.approve_review('1', 'sha256:example')
 
 
 class RepositoryTests(unittest.TestCase):

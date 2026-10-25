@@ -3,23 +3,27 @@
 from typing import Annotated
 
 from fastapi import Depends, FastAPI, File, HTTPException, Query, Request, Response, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from starlette.concurrency import run_in_threadpool
 from starlette.datastructures import UploadFile as StarletteUploadFile
 
 from .repository import RepositoryUnavailable, ReviewConflict, ReviewNotFound
 from .imports import InvalidUpload
-from .service import IntegrationPending, InvalidCursor, ReviewService, ReviewUpload, get_review_service
+from .service import IntegrationPending, InvalidCursor, PostFailed, ReviewService, ReviewUpload, get_review_service
 
 from .responses import (
-    CREATE_EXAMPLE, CSV_EXAMPLE, GET_EXAMPLE, LIST_EXAMPLE, SSE_EXAMPLE,
-    STUB_RESPONSE, CreateReviewResponse, GetReviewResponse, ListReviewResponse,
+    APPROVE_EXAMPLE, CREATE_EXAMPLE, CSV_EXAMPLE, GET_EXAMPLE, LIST_EXAMPLE, SSE_EXAMPLE,
+    STUB_RESPONSE, ApproveReviewRequest, ApproveReviewResponse, CreateReviewResponse,
+    GetReviewResponse, ListReviewResponse,
 )
 
 app = FastAPI(
     title="AfterHours review API", version="0.1.0",
-    description="Create reviews and read persisted summaries/details from SpacetimeDB, with polling SSE updates. Approval-checked export remains an explicit 501 integration stub.",
+    description="Create reviews and read persisted summaries/details from SpacetimeDB, with polling SSE updates. Hash-bound UI approval posts the journal through the gateway. Export remains an explicit 501 integration stub.",
 )
+app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+                   allow_methods=["*"], allow_headers=["*"])
 
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024
 ALLOWED_MEDIA_TYPES = {"text/csv", "application/json", "text/plain", "application/pdf"}
@@ -57,6 +61,11 @@ async def review_conflict(_: Request, error: ReviewConflict):
 @app.exception_handler(ReviewNotFound)
 async def review_not_found(_: Request, error: ReviewNotFound):
     return JSONResponse(status_code=404, content={"detail": str(error)})
+
+
+@app.exception_handler(PostFailed)
+async def post_failed(_: Request, error: PostFailed):
+    return JSONResponse(status_code=502, content={"detail": str(error)})
 
 
 @app.post(
@@ -131,6 +140,18 @@ async def get_review(
             'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no',
         })
     return await run_in_threadpool(service.get_review, review_id)
+
+
+@app.post(
+    "/approve-review", response_model=ApproveReviewResponse,
+    responses={409: {"description": "Hash mismatch, blockers remain, or the proposal is not ready."},
+               502: {"description": "QuickBooks rejected the journal."}, 200: {
+        "description": "Human approval bound to the current proposal hash; gateway posted or found the journal.",
+        "content": {"application/json": {"example": APPROVE_EXAMPLE}},
+    }, 404: {"description": "Review not found."}},
+)
+async def approve_review(body: ApproveReviewRequest, service: Service):
+    return await run_in_threadpool(service.approve_review, body.review_id, body.proposal_hash)
 
 
 @app.get(

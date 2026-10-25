@@ -220,6 +220,28 @@ class ReviewTests(unittest.IsolatedAsyncioTestCase):
         body = (await self.client.get('/get-review', params={'review_id': '1'})).json()
         self.assertEqual(body['status'], 'EXTRACTING')
 
+    async def test_approve_posts_matching_hash_and_rejects_mismatch(self):
+        self.service.create_review(uploads())
+        self.db_client.tables['cases'][0].update(current_proposal_id=7, state='READY_FOR_REVIEW')
+        self.db_client.tables['proposals'].append(dict(
+            id=7, case_id=1, input_revision=1, corrected_target_cents='770000',
+            adjustment_cents='70000', export_amount_cents='70000', hash='abc',
+            currency='USD', entry_date='2026-10-24', journal_lines=[{
+                'account_code': '6000', 'account_name': 'Expense',
+                'debit_cents': '70000', 'credit_cents': '0'}]))
+        posts = []
+        self.service.post_intuit = lambda case_id, approve_hash: posts.append((case_id, approve_hash)) or {
+            'posted': True, 'already_posted': False, 'qbo_id': 146}
+        mismatch = await self.client.post('/approve-review', json={'review_id': '1', 'proposal_hash': 'nope'})
+        self.assertEqual(mismatch.status_code, 409)
+        self.assertEqual(posts, [])
+        ok = await self.client.post('/approve-review', json={'review_id': '1', 'proposal_hash': 'abc'})
+        self.assertEqual(ok.status_code, 200, ok.text)
+        self.assertEqual(ok.json(), {
+            'review_id': '1', 'proposal_hash': 'abc', 'posted': True,
+            'already_posted': False, 'qbo_id': '146'})
+        self.assertEqual(posts, [(1, 'abc')])
+
     async def test_accrual_identifier_limits_match_database_unicode_length(self):
         files = uploads()
         accrual = json.loads(files[0].stream.read())
