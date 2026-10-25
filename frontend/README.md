@@ -1,6 +1,6 @@
 # AfterHours frontend
 
-Working React + TypeScript / Vite review workspace with a 25-state branching React Flow graph. The default UI is synthetic demo mode. Set `VITE_REVIEW_ID` to connect the workspace to a persisted backend review; the browser still never receives database or provider credentials.
+Working React + TypeScript / Vite review workspace with a four-stage React Flow overview: **Normalize → Match → Investigate → Recalculate**. Select a stage to explore its original flowchart: steps, connecting arrows, decision labels, parallel checks and retry paths. Only that stage is shown; **All stages** returns to the overview. The underlying workflow retains all 25 states. The default UI is synthetic demo mode. Set `VITE_REVIEW_ID` to connect the workspace to a persisted backend review; the browser still never receives database or provider credentials.
 
 ## Run locally
 
@@ -46,12 +46,13 @@ The UI remains usable without the Python API while its routes return 501. Its op
 
 Other deterministic scenarios: no change, missing amendment, bounded provider failure (two retries), rejection/revision, invalid source, conflicting authority and closed accounting period. No-change and blocked/waiting scenarios cannot export. Pause/Replay/Reset affect fixture playback only. Reset cancels previous timers and pending answers. Replay starts a new run identity.
 
-Graph interactions include pan/zoom, fit, zoom percentage, full workspace expansion, closable inspector and optional follow-active-step. Follow defaults off and never changes selection or viewport during updates. Enter/Space opens keyboard-focused nodes; Escape dismisses evidence, inspector and expanded mode. Narrow screens use a bottom inspector. Reduced motion disables active edge animation and follow transitions.
+Graph interactions include pan/zoom, fit, zoom percentage, full workspace expansion and optional follow-active-step. **All stages** returns from a stage's details to the overview. Opening a stage starts execution-follow mode, which tracks the active step and advances through subsequent stages. Panning, zooming, selecting a step, returning to the overview or using the top/bottom stage navigation strips stops following. The Follow active step checkbox can resume it. Enter/Space opens keyboard-focused stages or steps; Escape dismisses evidence and expanded mode. Evidence remains available from Activity and the proposed correction. The sidebar scrolls within the workflow card and can be collapsed from the graph toolbar; Activity has its own collapse control. The workflow card ends 5px below the color legend. Narrow screens start with the sidebar collapsed. Reduced motion disables follow transitions.
 
 ## Source organization
 
 - `src/App.tsx`: shell, overview, workspace composition and view state.
-- `src/components/ExecutionGraph.tsx`: stable 25-state graph, four regions, controls and state styling.
+- `src/components/ExecutionGraph.tsx`: four-stage overview, stage flowcharts, controls and state styling.
+- `src/data/stages.ts`: stage membership and aggregate status from workflow steps.
 - `src/components/ReviewPanel.tsx`: proposal, simulated email decisions, journal/export UI.
 - `src/components/EvidenceViewer.tsx`: text-only evidence modal; no HTML injection.
 - `src/data/topology.ts`: states, edges, joins and return loops.
@@ -94,6 +95,6 @@ npm run build
 npm test
 ```
 
-Twenty-five tests cover the parallel join, all fixture gates, questions and pending approval lock, rejection/new version, stale approval invalidation, $700-only CSV, exact large money values, CSV formula protection, TSV fallback, timer/reset cancellation, subscription cleanup, opaque-cursor reconnect/deduplication, 501 handling, keyboard evidence inspection, Escape, follow-off selection preservation, expansion and overview navigation.
+Tests cover the parallel join, fixture gates, questions and pending approval lock, rejection/new version, stale approval invalidation, exact money values, CSV formula protection, TSV fallback, timer/reset cancellation, subscription cleanup, opaque-cursor reconnect/deduplication, 501 handling, keyboard evidence inspection, Escape, follow-off selection preservation, expansion and overview navigation. Stage tests also check aggregate status, the four-card overview, original stage positions and routed connections, step selection without an inspector and keyboard focus restoration.
 
-Workspace interaction tests use jsdom with layout/SVG measurement shims; they are not screenshot or real-browser tests. The approved hosted prototype could not be retrieved in the available web tool, and browser discovery returned no available browsers. The implementation follows the handoff's exact light tokens and topology, but pixel-level comparison, real pointer pan/zoom and responsive visual inspection remain unverified.
+Workspace interaction tests use jsdom with layout/SVG measurement shims. The stage overview was also checked in local headless Chrome at desktop and 390px mobile widths, covering stage navigation, original stage positions and routed connections, keyboard activation, focus restoration and mobile fit. This browser check uses synthetic demo data; it does not exercise live agents or QuickBooks posting.

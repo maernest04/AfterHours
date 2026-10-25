@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import {
   ArrowUpRight,
   FileText,
@@ -8,9 +8,10 @@ import {
   Radio,
   ChevronRight,
   ArrowLeft,
-  CircleHelp,
+  ChevronDown,
+  ChevronUp,
 } from "lucide-react";
-import { ExecutionGraph, CloseButton } from "./components/ExecutionGraph";
+import { ExecutionGraph } from "./components/ExecutionGraph";
 import { EvidenceViewer } from "./components/EvidenceViewer";
 import { ReviewPanel } from "./components/ReviewPanel";
 import { LiveProgress } from "./components/LiveProgress";
@@ -18,7 +19,6 @@ import { useGraphTraversal } from "./components/useGraphTraversal";
 import { MockReviewAdapter } from "./data/mockReviewAdapter";
 import { ApiReviewAdapter } from "./data/apiReviewAdapter";
 import { variants } from "./data/fixtures";
-import { steps } from "./data/topology";
 import {
   acceptSnapshot,
   money,
@@ -58,15 +58,15 @@ export default function App({
   const [snapshot, setSnapshot] = useState<CaseSnapshot>(() => structuredClone(adapter.snapshot));
   const [screen, setScreen] = useState<"review" | "overview">("review");
   const [selected, setSelected] = useState<string | null>(null);
-  const [inspector, setInspector] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const [follow, setFollow] = useState(adapter.mode === "api");
   const [sidebarTab, setSidebarTab] = useState<"pipeline" | "correction">("pipeline");
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => window.matchMedia?.("(max-width: 1200px)").matches ?? false);
+  const [activityCollapsed, setActivityCollapsed] = useState(false);
   const [reducedMotion] = useState(() => window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false);
   const graphSnapshot = useGraphTraversal(snapshot, reducedMotion);
   const [evidence, setEvidence] = useState<EvidenceRecord | null>(null);
   const [error, setError] = useState("");
-  const reviewRef = useRef<HTMLDivElement>(null);
   useEffect(
     () =>
       adapter.subscribeCase(adapter.snapshot.caseId, (incoming) =>
@@ -78,13 +78,12 @@ export default function App({
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         if (evidence) setEvidence(null);
-        else if (inspector) setInspector(false);
         else setExpanded(false);
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [evidence, inspector]);
+  }, [evidence]);
   const openEvidence = async (id: string) => {
     try {
       setEvidence(
@@ -98,11 +97,6 @@ export default function App({
       setError(e instanceof Error ? e.message : "Evidence unavailable.");
     }
   };
-  const select = (id: string) => {
-    setSelected(id);
-    setInspector(true);
-  };
-  const step = steps.find((s) => s.id === selected);
   const proposal = snapshot.proposal;
   const stale = proposal && proposal.inputRevision !== snapshot.inputRevision;
   const reset = (variant = snapshot.variant) => {
@@ -111,7 +105,6 @@ export default function App({
     setEvidence(null);
     setError("");
     setSelected(null);
-    setInspector(false);
   };
   return (
     <div className="app-shell">
@@ -401,113 +394,25 @@ export default function App({
               </div>
             )}
             <section
-              className={`workspace ${expanded ? "expanded" : ""}`}
+              className={`workspace ${expanded ? "expanded" : ""} ${sidebarCollapsed ? "sidebar-collapsed" : ""}`}
               aria-label="State machine workspace"
             >
               <div className="graph-panel">
                 <ExecutionGraph
                   snapshot={graphSnapshot}
                   selected={selected}
-                  onSelect={select}
+                  onSelect={setSelected}
+                  onStageChange={(shouldFollow) => { setSelected(null); setFollow(shouldFollow); }}
                   expanded={expanded}
                   onExpand={() => setExpanded(!expanded)}
                   follow={follow}
                   onFollow={() => setFollow(!follow)}
-                  onInspector={() => {
-                    if (!selected) setSelected("read");
-                    setInspector(!inspector);
-                  }}
+                  onFollowStop={() => setFollow(false)}
+                  sidebarCollapsed={sidebarCollapsed}
+                  onSidebarToggle={() => setSidebarCollapsed(!sidebarCollapsed)}
                 />
               </div>
-              {inspector && step && (
-                <aside className="step-inspector" aria-label="Step inspector">
-                  <div className="inspector-header">
-                    <span>Step inspector</span>
-                    <CloseButton
-                      label="Close step inspector"
-                      onClick={() => setInspector(false)}
-                    />
-                  </div>
-                  <div className="step-id">
-                    {step.id.toUpperCase()}{" "}
-                    <span className={`pill ${snapshot.nodeStates[step.id]}`}>
-                      {snapshot.nodeStates[step.id]}
-                    </span>
-                  </div>
-                  <h2>{step.label}</h2>
-                  <p className="role-label">{step.role}</p>
-                  <p>{["blocked", "waiting"].includes(snapshot.nodeStates[step.id]) && snapshot.blocker ? snapshot.blocker : step.purpose}</p>
-                  {snapshot.nodeStates[step.id] === "dormant" && (
-                    <div className="notice muted">
-                      This alternative has not been visited in the current run.
-                    </div>
-                  )}
-                  {snapshot.nodeStates[step.id] === "queued" && (
-                    <div className="notice">
-                      Waiting for all required parallel source checks.
-                    </div>
-                  )}
-                  <h3>Linked evidence</h3>
-                  {step.evidence.length ? (
-                    <div className="inspector-evidence">
-                      {step.evidence.map((id) => (
-                        <button onClick={() => void openEvidence(id)} key={id}>
-                          <FileText size={15} />
-                          <span>
-                            {id === "excluded"
-                              ? "Unapproved $130 request"
-                              : id === "amendment"
-                                ? "Signed rate amendment"
-                                : id === "invoice"
-                                  ? "Received invoice · unposted"
-                                  : id}
-                          </span>
-                          <ChevronRight size={14} />
-                        </button>
-                      ))}
-                    </div>
-                  ) : (
-                    <p className="muted small">
-                      This state uses validated workflow results.
-                    </p>
-                  )}
-                  {[
-                    "review",
-                    "export",
-                    "question",
-                    "rejected",
-                    "calculate",
-                    "amendment",
-                  ].includes(step.id) && (
-                    <button
-                      className="primary"
-                      onClick={() => {
-                        setExpanded(false);
-                        setInspector(false);
-                        setSidebarTab("correction");
-                        setTimeout(
-                          () =>
-                            reviewRef.current?.scrollIntoView({
-                              behavior: "smooth",
-                              block: "start",
-                            }),
-                          0,
-                        );
-                      }}
-                    >
-                      View correction & decision <ArrowUpRight size={14} />
-                    </button>
-                  )}
-                  <div className="inspector-note">
-                    <CircleHelp size={16} />
-                    <p>
-                      Sources explain the result. Internal model reasoning is
-                      never displayed.
-                    </p>
-                  </div>
-                </aside>
-              )}
-              <div className="workspace-sidebar" aria-label="Review details">
+              <div id="review-sidebar" className="workspace-sidebar" aria-label="Review details" hidden={sidebarCollapsed}>
                 <div className="sidebar-tabs" role="tablist" aria-label="Review details tabs">
                   <button id="pipeline-tab" role="tab" aria-selected={sidebarTab === "pipeline"} aria-controls="pipeline-panel"
                     onClick={() => setSidebarTab("pipeline")}
@@ -522,7 +427,7 @@ export default function App({
                   <LiveProgress snapshot={graphSnapshot} />
                 </div>
                 <div id="correction-panel" role="tabpanel" aria-labelledby="correction-tab" hidden={sidebarTab !== "correction"}>
-              <div ref={reviewRef} className="review-card">
+              <div className="review-card">
                 <ReviewPanel
                   key={snapshot.runId}
                   snapshot={snapshot}
@@ -534,11 +439,19 @@ export default function App({
               </div>
             </section>
             <div className="detail-grid">
-              <section className="activity-panel">
+              <section className={`activity-panel ${activityCollapsed ? "collapsed" : ""}`}>
                 <div className="section-heading">
                   <h2>Activity</h2>
-                  <span className="mono">{snapshot.events.length} events</span>
+                  <div className="activity-heading-actions">
+                    <span className="mono">{snapshot.events.length} events</span>
+                    <button className="icon-button" aria-label={activityCollapsed ? "Expand activity" : "Collapse activity"}
+                      aria-expanded={!activityCollapsed} aria-controls="activity-content"
+                      onClick={() => setActivityCollapsed(!activityCollapsed)}>
+                      {activityCollapsed ? <ChevronDown size={18} /> : <ChevronUp size={18} />}
+                    </button>
+                  </div>
                 </div>
+                <div id="activity-content" hidden={activityCollapsed}>
                 <p className="small muted">
                   {adapter.mode === "api" ? "Observed pipeline checkpoints" : "Timestamped demo events"}
                 </p>
@@ -578,6 +491,7 @@ export default function App({
                     ))}
                   </ol>
                 )}
+                </div>
               </section>
             </div>
           </>
