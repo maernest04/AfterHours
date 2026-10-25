@@ -28,7 +28,7 @@ def uploads():
 class MemoryClient:
     """Persist reducer arguments, leaving application classification/parsing to real SDK."""
     def __init__(self):
-        self.tables = {name: [] for name in ('documents', 'cases', 'facts', 'proposals')}
+        self.tables = {name: [] for name in ('documents', 'cases', 'facts', 'proposals', 'emails')}
         self.closed = 0
 
     def close(self):
@@ -70,6 +70,12 @@ class MemoryClient:
                 self.tables['facts'].append(dict(id=len(self.tables['facts']) + 1,
                     case_id=1, input_revision=1, document_id=fact[0], page_or_row=fact[1],
                     excerpt=fact[2], field=fact[3], value=fact[4]))
+        elif name == 'store_email':
+            fields = ['company_id', 'message_key', 'vendor_id', 'thread_id', 'sender',
+                      'recipients', 'subject', 'sent_at', 'body', 'attachment_document_ids']
+            row = dict(zip(fields, args))
+            row.update(id=len(self.tables['emails']) + 1)
+            self.tables['emails'].append(row)
         else:
             raise AssertionError(f'Unexpected reducer: {name}')
 
@@ -107,6 +113,18 @@ class ReviewTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([row['type'] for row in self.db_client.tables['documents']],
                          ['ACCRUAL', 'CONTRACT', 'TIMESHEET', 'INVOICE', 'LEDGER'])
         self.assertEqual(self.db.read_document(1)[1], (SEED / 'acme_accrual_2026-09.json').read_bytes())
+        self.assertEqual(self.db_client.tables['emails'], [])
+
+    async def test_create_puts_uploaded_amendment_in_that_vendor_mailbox(self):
+        data = (SEED / 'acme_amendment_1.txt').read_bytes()
+        response = await self.create(uploads() + [ReviewUpload(
+            'acme_amendment_1.txt', 'text/plain', len(data), io.BytesIO(data))])
+        self.assertEqual(response.status_code, 202, response.text)
+        emails = self.db_client.tables['emails']
+        self.assertEqual(len(emails), 1)
+        self.assertEqual(emails[0]['vendor_id'], 'V-ACME')
+        self.assertEqual(emails[0]['attachment_document_ids'], [6])
+        self.assertIn('Amendment No. 1', emails[0]['subject'])
 
     async def test_source_returns_original_bytes_and_rejects_unrelated_facts(self):
         await self.create()

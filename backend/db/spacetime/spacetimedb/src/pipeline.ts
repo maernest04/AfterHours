@@ -454,7 +454,7 @@ const MatchIn = t.object('MatchIn', {
 /**
  * Worker-only (brief p.4 complete_job; control-plane AgentOutput). Validates scope and shape, saves
  * proposed facts and matches, records the explanation, and advances the pipeline:
- * EXTRACTION -> MATCHING -> INVESTIGATION (when the agent reports unresolved questions).
+ * EXTRACTION -> MATCHING -> INVESTIGATION for every review, including clean matches.
  * Agents cannot approve, export, change policy or write accounting entries.
  */
 export const completeJob = spacetimedb.reducer(
@@ -547,7 +547,7 @@ export const completeJob = spacetimedb.reducer(
     // build_proposal (later phase): all current-revision jobs SUCCEEDED and none queued.
     if (j.role === 'EXTRACTION') {
       enqueueJob(ctx, setCase(ctx, c, { state: 'MATCHING' }), 'MATCHING');
-    } else if (j.role === 'MATCHING' && questions.length > 0) {
+    } else if (j.role === 'MATCHING') {
       enqueueJob(ctx, setCase(ctx, c, { state: 'INVESTIGATING' }), 'INVESTIGATION');
     } else if (j.role === 'INVESTIGATION' && questions.length > 0) {
       // Missing evidence blocks the affected correction (brief p.1).

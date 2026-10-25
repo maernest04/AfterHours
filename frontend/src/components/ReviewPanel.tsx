@@ -19,7 +19,7 @@ export function ReviewPanel({
   onEvidence: (id: string) => void;
 }) {
   const [pending, setPending] = useState(false),
-    [question, setQuestion] = useState("Why is the adjustment $700?"),
+    [question, setQuestion] = useState("Why did the $100 contract post $7,000 when the timesheets are at $110?"),
     [reason, setReason] = useState(""),
     [action, setAction] = useState<"question" | "reject" | null>(null),
     [error, setError] = useState(""),
@@ -124,7 +124,7 @@ export function ReviewPanel({
       <div className="table-scroll">
         <table className="journal-table">
           <caption>
-            September 30, 2026 · {s.caseId}-V{p.version}
+            {p.lines[0]?.entryDate || "Entry date unavailable"} · {s.caseId}-V{p.version}
           </caption>
           <thead>
             <tr>
@@ -138,6 +138,7 @@ export function ReviewPanel({
               <tr key={l.accountCode}>
                 <td>
                   <span>{l.accountCode}</span> {l.accountName}
+                  {l.description ? <small>{l.description}</small> : null}
                 </td>
                 <td>{money(l.debit)}</td>
                 <td>{money(l.credit)}</td>

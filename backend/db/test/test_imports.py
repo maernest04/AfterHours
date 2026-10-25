@@ -3,7 +3,7 @@ from types import SimpleNamespace
 from unittest.mock import Mock
 
 from afterhours_db.cases import finalize_import, is_awaiting_proposal, list_facts
-from afterhours_db.mailbox import store_email
+from afterhours_db.mailbox import seed_vendor_amendment_mailbox, store_email
 
 
 class ImportTests(unittest.TestCase):
@@ -46,13 +46,18 @@ class ImportTests(unittest.TestCase):
         tables = {
             'cases_view': [{'id': 1, 'input_revision': 2, 'state': 'MATCHING'}],
             'facts_view': [{'id': 1, 'case_id': 1, 'input_revision': 1}, {'id': 2, 'case_id': 1, 'input_revision': 2}],
-            'jobs_view': [{'id': 1, 'case_id': 1, 'case_revision': 1, 'status': 'FAILED'}, {'id': 2, 'case_id': 1, 'case_revision': 2, 'status': 'SUCCEEDED'}],
+            'jobs_view': [{'id': 1, 'case_id': 1, 'case_revision': 1, 'role': 'INVESTIGATION', 'status': 'SUCCEEDED'},
+                          {'id': 2, 'case_id': 1, 'case_revision': 2, 'role': 'MATCHING', 'status': 'SUCCEEDED'}],
         }
         self.client.query.side_effect = lambda sql: tables[sql.split()[-1]]
         self.assertEqual([fact['id'] for fact in list_facts(self.db, 1)], [2])
-        self.assertTrue(is_awaiting_proposal(self.db, 1))
-        tables['jobs_view'][1]['status'] = 'RUNNING'
+        # Even a completed matching job and an old investigation cannot bypass the current review.
         self.assertFalse(is_awaiting_proposal(self.db, 1))
+        tables['jobs_view'].append({'id': 3, 'case_id': 1, 'case_revision': 2,
+                                   'role': 'INVESTIGATION', 'status': 'RUNNING'})
+        self.assertFalse(is_awaiting_proposal(self.db, 1))
+        tables['jobs_view'][-1]['status'] = 'SUCCEEDED'
+        self.assertTrue(is_awaiting_proposal(self.db, 1))
 
     def test_mailbox_defaults_to_no_attachments_and_returns_committed_email(self):
         self.client.query.return_value = [{'id': 2, 'message_key': 'm1'}]
@@ -62,3 +67,15 @@ class ImportTests(unittest.TestCase):
         self.assertEqual(result['id'], 2)
         self.client.call_reducer.assert_called_once_with('store_email', ['demo', 'm1', 'V1', 't1',
             'from@example.test', ['to@example.test'], 'Test', '2026-09-01T12:00:00Z', 'Synthetic', []])
+
+    def test_seeded_amendment_mailbox_uses_the_case_vendor(self):
+        self.client.query.return_value = [{'id': 3, 'message_key': 'k:mail:amendment'}]
+        result = seed_vendor_amendment_mailbox(
+            self.db, vendor_id='V-DEMO-1', message_key='k:mail:amendment', amendment_document_ids=[9])
+        self.assertEqual(result['id'], 3)
+        self.assertIsNone(seed_vendor_amendment_mailbox(
+            self.db, vendor_id='V-DEMO-1', message_key='k:mail:amendment', amendment_document_ids=[]))
+        args = self.client.call_reducer.call_args.args
+        self.assertEqual(args[0], 'store_email')
+        self.assertEqual(args[1][2], 'V-DEMO-1')
+        self.assertEqual(args[1][9], [9])

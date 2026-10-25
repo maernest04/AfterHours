@@ -15,6 +15,7 @@ from afterhours_agents.worker import run_once as run_matching
 from afterhours_extraction.provider import bitdeer_session
 from afterhours_extraction.worker import run_job as run_extraction
 from afterhours_investigation.factory import factory_session
+from afterhours_investigation.mock import mock_investigation_session
 from afterhours_investigation.calculator import build_proposal
 from afterhours_investigation.worker import run_job as run_investigation
 
@@ -43,6 +44,13 @@ async def live_investigation_session():
         raise ValueError('Set FACTORY_API_KEY and FACTORY_MODEL_ID before running investigation')
     async with factory_session() as decide:
         yield decide
+
+
+def investigation_from_env():
+    """Demo default is the scripted mock. Set INVESTIGATION_MODE=live for Factory."""
+    if os.getenv('INVESTIGATION_MODE', 'mock').strip().lower() == 'live':
+        return live_investigation_session, 'LIVE'
+    return mock_investigation_session, 'REPLAYED'
 
 
 @asynccontextmanager

@@ -101,7 +101,7 @@ class ReviewApiTests(unittest.IsolatedAsyncioTestCase):
     async def test_no_question_settings_or_separate_updates_routes(self):
         paths = (await self.client.get('/openapi.json')).json()['paths']
         self.assertEqual(set(paths), {
-            '/create-review', '/list-review', '/get-review', '/export-review', '/approve-review',
+            '/create-review', '/list-review', '/get-review', '/export-review', '/approve-review', '/review-source',
         })
 
 

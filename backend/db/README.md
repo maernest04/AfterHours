@@ -10,6 +10,38 @@ case/mailbox/job helpers, agent tools, bootstrap, seed and CLI are Python. Node
 is needed to build/typecheck the module; generated TypeScript client bindings
 and the old Node repositories are no longer used.
 
+## Repeat the Intuit $7,000 / $700 demo
+
+This is a targeted rehearsal reset, not a whole-database reset. Delete only the
+demo's $700 correction journal in QuickBooks; retain journal `AH-DEMO-7000`.
+The vendor balance must be back at $7,000. Wait until the pipeline has stopped.
+
+From the repository root, use the case ID shown in the review workspace:
+
+```powershell
+# Preview first (no changes):
+& .\backend\agents\.venv\Scripts\python.exe backend/tests/reset_intuit_demo.py --case-id 35
+# Back up and remove this review and its dependent records:
+& .\backend\agents\.venv\Scripts\python.exe backend/tests/reset_intuit_demo.py --case-id 35 --apply
+```
+
+The script uses the database configured in `.env` (currently local), checks the
+live QuickBooks sandbox baseline, backs up rows to `data/demo-backups/`, and calls
+the owner-only `reset_intuit_demo_case` reducer. It refuses normal accounting
+cases, active work, a changed baseline, or a correction that is still posted.
+Original documents, mailbox records, other reviews and QuickBooks remain intact.
+The JSON backup is an audit copy; this script does not automatically restore it.
+
+The reset also exports the six original files to `data/intuit-demo-upload/`.
+Open `http://localhost:5173/` without a `?review=...` parameter, select those six
+files using **Select source files**, and click **Create and watch review**.
+Approve the new $700 proposal, then refresh QuickBooks to see $7,700. To repeat,
+delete that correction and run the script with the **new** case ID. The ordinary
+built-in demo package is separate and does not use this QuickBooks vendor.
+
+The reducer must be published once before applying the first reset. Publish the
+module with `--delete-data=never`; do not use the whole-database `reset` command.
+
 ## Install and run
 
 From the repository root, with Docker Compose, uv, Node and the SpacetimeDB

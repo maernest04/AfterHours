@@ -21,6 +21,8 @@ services:
       EXTRACTION_TIMEOUT_SECONDS: ${EXTRACTION_TIMEOUT_SECONDS:-240}
       MATCHING_TIMEOUT_SECONDS: ${MATCHING_TIMEOUT_SECONDS:-120}
       INVESTIGATION_TIMEOUT_SECONDS: ${INVESTIGATION_TIMEOUT_SECONDS:-180}
+      INVESTIGATION_MODE: ${INVESTIGATION_MODE:-mock}
+      INVESTIGATION_MOCK_SECONDS: ${INVESTIGATION_MOCK_SECONDS:-15}
     volumes:
       - ./backend/.secrets/gateway.token:/run/afterhours/gateway.token:ro
       - ./backend/.secrets/worker.token:/run/afterhours/worker.token:ro
@@ -96,6 +98,14 @@ services:
       COMPANY_ID: ${COMPANY_ID:-demo}
       SPACETIMEDB_SECRETS_DIR: /run/afterhours
       FILE_STORE_DIR: /app/data/files
+      INTUIT_CLIENT_ID: ${INTUIT_CLIENT_ID:-}
+      INTUIT_CLIENT_SECRET: ${INTUIT_CLIENT_SECRET:-}
+      INTUIT_REALM_ID: ${INTUIT_REALM_ID:-}
+      INTUIT_ACCESS_TOKEN: ${INTUIT_ACCESS_TOKEN:-}
+      INTUIT_REFRESH_TOKEN: ${INTUIT_REFRESH_TOKEN:-}
+      INTUIT_EXPENSE_ACCOUNT_ID: ${INTUIT_EXPENSE_ACCOUNT_ID:-}
+      INTUIT_LIABILITY_ACCOUNT_ID: ${INTUIT_LIABILITY_ACCOUNT_ID:-}
+      INTUIT_VENDOR_ID: ${INTUIT_VENDOR_ID:-}
     volumes:
       - ./backend/.secrets/gateway.token:/run/afterhours/gateway.token:ro
       - ./data/files:/app/data/files

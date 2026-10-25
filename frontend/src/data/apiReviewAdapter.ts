@@ -6,7 +6,12 @@ import type {
   NodeStatus,
   ReviewEvent,
 } from "./reviewAdapter";
+import { DEMO_EXPLANATION, DEMO_JOURNAL_DESCRIPTION, isDemoCorrection } from "./demoCorrection";
 import { edgeId, steps } from "./topology";
+
+export const INVESTIGATION_MS = 15_000;
+const MAILBOX_MS = 5_000;
+const THREADS_MS = 5_000;
 
 function statusFor(status: ApiReview["status"]): CaseSnapshot["status"] {
   switch (status) {
@@ -26,7 +31,11 @@ function statusFor(status: ApiReview["status"]): CaseSnapshot["status"] {
   throw new Error(`Unsupported API review status: ${status}`);
 }
 
-export function nodesFor(status: ApiReview["status"], blockers: string[] = []): Record<string, NodeStatus> {
+export function nodesFor(
+  status: ApiReview["status"],
+  blockers: string[] = [],
+  investigatingForMs = 0,
+): Record<string, NodeStatus> {
   const nodes = Object.fromEntries(steps.map((step) => [step.id, "dormant" as NodeStatus]));
   const set = (id: string, value: NodeStatus) => { if (id in nodes) nodes[id] = value; };
   set("import", "complete");
@@ -43,8 +52,16 @@ export function nodesFor(status: ApiReview["status"], blockers: string[] = []): 
   set("match", status === "MATCHING" ? "running" : "complete");
   if (status === "MATCHING") return nodes;
   set("agrees", "complete");
-  if (status === "INVESTIGATING" || status === "WAITING_FOR_INPUT") {
-    set(status === "WAITING_FOR_INPUT" ? "missing" : "mailbox", status === "WAITING_FOR_INPUT" ? "waiting" : "running");
+  if (status === "WAITING_FOR_INPUT") {
+    set("missing", "waiting");
+    return nodes;
+  }
+  if (status === "INVESTIGATING") {
+    set("mailbox", investigatingForMs >= MAILBOX_MS ? "complete" : "running");
+    if (investigatingForMs >= MAILBOX_MS) {
+      set("threads", investigatingForMs >= MAILBOX_MS + THREADS_MS ? "complete" : "running");
+    }
+    if (investigatingForMs >= MAILBOX_MS + THREADS_MS) set("attachments", "running");
     return nodes;
   }
   if (["READY_FOR_REVIEW", "APPROVED", "EXPORTED", "VERIFIED_NO_CHANGE"].includes(status)) {
@@ -87,16 +104,26 @@ function checkpointFor(api: ApiReview): ReviewEvent {
   return { id: `${api.review_id}:checkpoint:${api.status}`, time: api.updated_at, actor, action, outcome, evidenceIds: [] };
 }
 
-function mapSnapshot(api: ApiReview, revision: number, postedHash: string | null = null): CaseSnapshot {
+function mapSnapshot(
+  api: ApiReview,
+  revision: number,
+  postedHash: string | null = null,
+  investigatingForMs = 0,
+): CaseSnapshot {
   const posted = postedHash !== null && postedHash === api.proposal_hash;
   const status = posted ? "approved" : statusFor(api.status);
+  const demo = isDemoCorrection({
+    original: api.original_amount_cents,
+    target: api.corrected_target_cents,
+    difference: api.difference_cents,
+  });
   const proposal = api.proposal_id && api.corrected_target_cents && api.difference_cents
     ? {
         version: 1,
         inputRevision: api.input_revision,
         target: api.corrected_target_cents,
         difference: api.difference_cents,
-        explanation: "Validated proposal from the AfterHours backend.",
+        explanation: demo ? DEMO_EXPLANATION : "Validated proposal from the AfterHours backend.",
         evidenceIds: api.evidence.map((e) => e.evidence_id),
         lines: api.journal_lines.map((line) => ({
           entryDate: line.entry_date,
@@ -106,7 +133,7 @@ function mapSnapshot(api: ApiReview, revision: number, postedHash: string | null
           debit: line.debit_cents,
           credit: line.credit_cents,
           currency: line.currency,
-          description: line.description,
+          description: line.description || (demo ? DEMO_JOURNAL_DESCRIPTION : ""),
         })),
         valid: api.blockers.length === 0,
         hash: api.proposal_hash ?? undefined,
@@ -120,7 +147,7 @@ function mapSnapshot(api: ApiReview, revision: number, postedHash: string | null
     status,
     original: api.original_amount_cents ?? "0",
     originalStatus: api.original_status ?? "POSTED",
-    nodeStates: nodesFor(posted ? "APPROVED" : api.status, api.blockers),
+    nodeStates: nodesFor(posted ? "APPROVED" : api.status, api.blockers, investigatingForMs),
     transitions: ["NEEDS_REVISION", "RETRYABLE_ERROR", "FAILED"].includes(api.status) ? [] : transitionsFor(api.status),
     events: api.history.map((event, index) => ({
       id: `${api.review_id}:${event.timestamp}:${index}`,
@@ -153,6 +180,8 @@ export class ApiReviewAdapter implements ReviewAdapter {
   private latest: ApiReview | null = null;
   private postedHash: string | null = null;
   private emit: ((snapshot: CaseSnapshot) => void) | null = null;
+  private investigatingSince: number | null = null;
+  private tick: ReturnType<typeof setInterval> | null = null;
 
   constructor(private readonly reviewId: string, baseUrl = "/api") {
     this.baseUrl = baseUrl;
@@ -184,7 +213,7 @@ export class ApiReviewAdapter implements ReviewAdapter {
   subscribeCase(id: string, onSnapshot: (snapshot: CaseSnapshot) => void) {
     if (id !== this.reviewId) throw new Error("Review not found.");
     this.emit = onSnapshot;
-    return this.api.subscribe(id, (review) => {
+    const stop = this.api.subscribe(id, (review) => {
       this.latest = review;
       this.push(review, onSnapshot);
     }, (connection, message) => {
@@ -192,10 +221,41 @@ export class ApiReviewAdapter implements ReviewAdapter {
       if (message) this.snapshot.blocker = message;
       onSnapshot(structuredClone(this.snapshot));
     });
+    return () => {
+      this.clearTick();
+      this.emit = null;
+      stop();
+    };
   }
 
-  private push(review: ApiReview, onSnapshot: (snapshot: CaseSnapshot) => void) {
-    const next = mapSnapshot(review, ++this.revision, this.postedHash);
+  private investigatingElapsed(review: ApiReview): number {
+    if (review.status !== "INVESTIGATING") {
+      this.investigatingSince = null;
+      this.clearTick();
+      return 0;
+    }
+    if (this.investigatingSince == null) {
+      this.investigatingSince = Date.parse(review.updated_at) || Date.now();
+      this.startTick();
+    }
+    return Math.max(0, Date.now() - this.investigatingSince);
+  }
+
+  private startTick() {
+    if (this.tick != null) return;
+    this.tick = setInterval(() => {
+      if (this.latest && this.emit) this.push(this.latest, this.emit, true);
+    }, 250);
+  }
+
+  private clearTick() {
+    if (this.tick != null) clearInterval(this.tick);
+    this.tick = null;
+  }
+
+  private push(review: ApiReview, onSnapshot: (snapshot: CaseSnapshot) => void, tick = false) {
+    const next = mapSnapshot(review, tick ? this.revision : ++this.revision, this.postedHash,
+      this.investigatingElapsed(review));
     const checkpoint = checkpointFor(review);
     this.checkpoints.set(checkpoint.id, checkpoint);
     next.events = [...next.events, ...this.checkpoints.values()]

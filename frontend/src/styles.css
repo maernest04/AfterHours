@@ -835,6 +835,7 @@ td {
   border-bottom: 1px solid #e4e9df;
 }
 td small {
+  display: block;
   margin-top: 5px;
 }
 .journal-table td:first-child span {

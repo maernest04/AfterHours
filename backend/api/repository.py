@@ -72,6 +72,7 @@ class SDKReviewRepository:
 
     def create_review(self, prepared: ReviewImport) -> CreateReviewResponse:
         from afterhours_db import finalize_import, list_cases
+        from afterhours_db.mailbox import seed_vendor_amendment_mailbox
 
         try:
             with self._connect() as db:
@@ -85,6 +86,10 @@ class SDKReviewRepository:
                     source_label='review API upload', reference_id=source,
                     upload_key=f'{key}:{index}',
                 ) for index, document in enumerate(prepared.documents)]
+                seed_vendor_amendment_mailbox(
+                    db, vendor_id=prepared.metadata['vendor_id'], message_key=f'{key}:mail:amendment',
+                    amendment_document_ids=[doc.id for doc, item in zip(documents, prepared.documents)
+                                            if item.type == 'AMENDMENT'])
                 case = finalize_import(db, document_ids=[doc.id for doc in documents],
                                        idempotency_key=key, **prepared.metadata)
                 # The persisted IMPORTED case is the durable queue; the pipeline sweeper

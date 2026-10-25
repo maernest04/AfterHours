@@ -246,3 +246,4 @@ export {
 
 export { configurePostingPeriod, buildProposal, markProposalFailure, proposalsView } from './calculator';
 export { importMailBatch, readMailEvidence } from './mailbox_access';
+export { resetIntuitDemoCase } from './demo_reset';

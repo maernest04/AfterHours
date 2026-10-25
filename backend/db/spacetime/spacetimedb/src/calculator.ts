@@ -40,6 +40,8 @@ export const buildProposal = spacetimedb.reducer({
         'Case is blocked or not awaiting a proposal.');
   const jobs = [...ctx.db.jobs.caseId.filter(c.id)].filter(j => j.caseRevision === c.inputRevision);
   check(jobs.length > 0 && jobs.every(j => j.status === 'SUCCEEDED'), 'Agent stages are incomplete.');
+  check(['EXTRACTION', 'MATCHING', 'INVESTIGATION'].every(role => jobs.some(j => j.role === role)),
+        'Extraction, matching and investigation must all complete before calculation.');
   const links = [...ctx.db.caseDocuments.caseId.filter(c.id)].filter(d => d.inputRevision === c.inputRevision);
   const docIds = new Set(links.map(link => link.documentId));
   for (const e of ctx.db.emails.vendorId.filter(c.vendorId)) {

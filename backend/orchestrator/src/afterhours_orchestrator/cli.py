@@ -10,7 +10,7 @@ import threading
 from afterhours_db import AfterHoursDB
 from dotenv import load_dotenv
 
-from .pipeline import extraction_configured, live_extraction_session, run_cycle
+from .pipeline import extraction_configured, investigation_from_env, live_extraction_session, run_cycle
 
 
 def main(argv=None):
@@ -37,8 +37,11 @@ def main(argv=None):
                 # A fresh connection each cycle recovers from transport failure;
                 # workers keep it open throughout inference and final completion.
                 with AfterHoursDB.connect('gateway') as gateway, AfterHoursDB.connect('worker') as worker:
+                    investigation_session, investigation_model_run = investigation_from_env()
                     report = run_cycle(gateway, worker, case_id=args.case_id, max_jobs=args.max_jobs, stop=stop,
                         calculation_after_case_id=calculation_cursor,
+                        investigation_session=investigation_session,
+                        investigation_model_run=investigation_model_run,
                         investigation_timeout=float(os.getenv('INVESTIGATION_TIMEOUT_SECONDS', '180')),
                         extraction_session=live_extraction_session if extraction_configured() else None,
                         extraction_timeout=float(os.getenv('EXTRACTION_TIMEOUT_SECONDS', '240')))

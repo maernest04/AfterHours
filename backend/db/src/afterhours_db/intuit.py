@@ -11,6 +11,7 @@ import io
 import json
 import os
 from pathlib import Path
+import re
 
 import httpx
 from dotenv import load_dotenv
@@ -23,6 +24,11 @@ from .parsers import parse_accrual
 
 SANDBOX = 'https://sandbox-quickbooks.api.intuit.com'
 TOKEN_URL = 'https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer'
+DEMO_BASELINE_DOC = 'AH-DEMO-7000'
+DEMO_VENDOR_NAMES = (
+    'October Accrual',
+    'AfterHours Demo Contractor - 7000 to 7700',
+)
 
 
 def dollars(value) -> str:
@@ -192,7 +198,10 @@ def journal_entry(proposal: dict, expense_account_id: str, liability_account_id:
             'AccountRef': {'value': str(account_id)},
         }
         if vendor_id and account_id == liability_account_id:
-            detail['Entity'] = {'Type': 'Vendor', 'EntityRef': {'value': str(vendor_id)}}
+            numeric = qbo_numeric_id(vendor_id)
+            if numeric is None:
+                raise ValueError('QuickBooks vendor id must be numeric')
+            detail['Entity'] = {'Type': 'Vendor', 'EntityRef': {'value': numeric}}
         lines.append({
             'Amount': float(dollars(Decimal(debit or credit) / 100)),
             'Description': line['account_name'],
@@ -221,6 +230,44 @@ def qbo_accounts(accounts: list[dict], settings: dict) -> tuple[str, str]:
 
 def posted_entry(entries: list[dict], proposal_hash: str) -> dict | None:
     return next((row for row in entries if proposal_hash in (row.get('PrivateNote') or '')), None)
+
+
+def qbo_numeric_id(value) -> str | None:
+    text = str(value or '').removeprefix('QBO-').strip()
+    return text if re.fullmatch(r'[1-9][0-9]{0,18}', text) else None
+
+
+def vendor_on_journal(entry: dict) -> str | None:
+    for line in entry.get('Line') or []:
+        value = (((line.get('JournalEntryLineDetail') or {}).get('Entity') or {})
+                 .get('EntityRef') or {}).get('value')
+        resolved = qbo_numeric_id(value)
+        if resolved:
+            return resolved
+    return None
+
+
+def resolve_qbo_vendor_id(case: dict, accounts: list[dict], liability_id: str, *,
+                          entries: list[dict] | None = None, qb: QuickBooks | None = None) -> str | None:
+    """A/P journal lines need a numeric QBO vendor; V-DEMO ids are not QuickBooks ids."""
+    if not any(str(row['Id']) == str(liability_id) and row.get('AccountType') == 'Accounts Payable'
+               for row in accounts):
+        return None
+    for candidate in (os.getenv('INTUIT_VENDOR_ID'), case.get('vendor_id')):
+        resolved = qbo_numeric_id(candidate)
+        if resolved:
+            return resolved
+    for entry in entries or []:
+        if entry.get('DocNumber') == DEMO_BASELINE_DOC:
+            resolved = vendor_on_journal(entry)
+            if resolved:
+                return resolved
+    if qb is not None:
+        for name in DEMO_VENDOR_NAMES:
+            vendors = qb.query(f"select * from Vendor where DisplayName = '{name}' MAXRESULTS 5")
+            if vendors:
+                return str(vendors[0]['Id'])
+    raise RuntimeError('Accounts Payable journal needs a numeric QuickBooks vendor id')
 
 
 def import_qbo(config: DatabaseConfig, period: str, *, start: bool = False) -> dict:
@@ -286,7 +333,8 @@ def post_proposal(config: DatabaseConfig, case_id: int, approve_hash: str | None
             raise ValueError('approve-hash does not match the current proposal')
         qb = QuickBooks()
         try:
-            existing = posted_entry(qb.query('select * from JournalEntry MAXRESULTS 1000'), proposal['hash'])
+            entries = qb.query('select * from JournalEntry MAXRESULTS 1000')
+            existing = posted_entry(entries, proposal['hash'])
             if existing:
                 result = {'already_posted': True, 'posted': False, 'qbo_id': existing.get('Id'),
                           'doc_number': existing.get('DocNumber'), 'txn_date': existing.get('TxnDate'),
@@ -295,9 +343,7 @@ def post_proposal(config: DatabaseConfig, case_id: int, approve_hash: str | None
                 return result
             accounts = qb.query('select * from Account MAXRESULTS 1000')
             expense, liability = qbo_accounts(accounts, db.settings())
-            vendor_id = None
-            if any(row['Id'] == liability and row.get('AccountType') == 'Accounts Payable' for row in accounts):
-                vendor_id = str(case.get('vendor_id') or '').removeprefix('QBO-') or None
+            vendor_id = resolve_qbo_vendor_id(case, accounts, liability, entries=entries, qb=qb)
             created = qb.request('POST', 'journalentry',
                                  json=journal_entry(proposal, expense, liability, vendor_id=vendor_id))['JournalEntry']
         finally:

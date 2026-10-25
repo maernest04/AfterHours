@@ -1,5 +1,6 @@
 import asyncio
 from datetime import datetime, timedelta, timezone
+import os
 from pathlib import Path
 from types import SimpleNamespace
 import unittest
@@ -11,6 +12,7 @@ from jsonschema import ValidationError
 
 from afterhours_investigation.factory import factory_session
 from afterhours_investigation.handler import investigate, validate_output
+from afterhours_investigation.mock import mock_investigation_session
 from afterhours_investigation.worker import run_job
 from afterhours_investigation.calculator import _coverage
 
@@ -240,3 +242,31 @@ class FactoryTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(config.disable_builtin_skills)
             self.assertEqual(config.restrict_tools, frozenset({'afterhours-no-native-tools'}))
             session.update_settings.assert_awaited_once_with(disabled_tools={'Execute'})
+
+
+class MockSessionTests(unittest.IsolatedAsyncioTestCase):
+    async def test_mock_searches_mailbox_then_finishes_with_amendment_facts(self):
+        tools = Mock()
+        tools.search_emails.return_value = [{'threadId': 't1', 'attachmentDocumentIds': ['2']}]
+        tools.read_email_thread.return_value = [{'attachmentDocumentIds': ['2']}]
+        tools.read_attachment.side_effect = [
+            {'documentId': '1', 'type': 'CONTRACT', 'text': CONTRACT},
+            {'documentId': '2', 'type': 'AMENDMENT', 'text': AMENDMENT},
+        ]
+        evidence = {**snapshot(), 'documents': [
+            {'documentId': '1', 'type': 'CONTRACT'},
+            {'documentId': '2', 'type': 'AMENDMENT'},
+        ], 'allowedEvidenceIds': ['doc:1', 'doc:2']}
+        with patch.dict(os.environ, {
+            'INVESTIGATION_MOCK_SECONDS': '0',
+            'INVESTIGATION_MOCK_MAILBOX_SECONDS': '0',
+            'INVESTIGATION_MOCK_THREAD_SECONDS': '0',
+        }):
+            async with mock_investigation_session() as decide:
+                result = await investigate(evidence, tools, decide)
+        self.assertEqual(result['proposedFacts'][0]['field'], 'rate.hourlyCents')
+        self.assertEqual(result['proposedFacts'][0]['value'], '11000')
+        self.assertEqual(result['unresolvedQuestions'], [])
+        tools.search_emails.assert_called()
+        tools.read_email_thread.assert_called()
+        self.assertEqual(tools.read_attachment.call_count, 2)

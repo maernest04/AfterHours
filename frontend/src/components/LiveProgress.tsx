@@ -3,6 +3,7 @@ import { steps } from "../data/topology";
 import { graphFocusStep } from "../data/graphFocus";
 import type { CaseSnapshot, NodeStatus } from "../data/reviewAdapter";
 import { balanced, money } from "../data/reviewAdapter";
+import { isDemoCorrection } from "../data/demoCorrection";
 
 const copy: Record<string, { title: string; detail: string; inputs: string[] }> = {
   import: { title: "Validating uploaded sources", detail: "The gateway is storing the original files and checking schemas, dates, and duplicate work rows.", inputs: ["Accrual JSON", "Contract", "Timesheet", "Invoice", "Ledger"] },
@@ -46,7 +47,11 @@ export function LiveProgress({ snapshot }: { snapshot: CaseSnapshot }) {
       <div className={`calculation-checkpoint combined ${active.id === "calculate" ? "focused" : ""}`}>
       <div><strong>Calculate & save proposal</strong>
       {[
-        { id: "calculate", title: "Calculate correction", result: `${money(snapshot.proposal.target)} target − ${money(snapshot.original)} posted = ${money(snapshot.proposal.difference, true)}` },
+        { id: "calculate", title: "Calculate correction", result: isDemoCorrection({
+          original: snapshot.original, target: snapshot.proposal.target, difference: snapshot.proposal.difference,
+        })
+          ? "70h × $100 posted = $7,000; 70h × $110 supported = $7,700; journal +$700"
+          : `${money(snapshot.proposal.target)} target − ${money(snapshot.original)} posted = ${money(snapshot.proposal.difference, true)}` },
         { id: "balance", title: "Period + balance valid?", result: `${snapshot.proposal.lines[0]?.entryDate || "Entry date unavailable"} · ${balanced(snapshot.proposal.lines) ? "Debits equal credits" : "Check journal balance"}` },
         { id: "proposal", title: "Save proposal", result: `Version ${snapshot.proposal.version} · ${snapshot.proposal.lines.length} journal lines · ${snapshot.proposal.evidenceIds.length} citations` },
       ].map((checkpoint) => <div key={checkpoint.id} className="combined-check-row"><span>{checkpoint.title}</span><p>{checkpoint.result}</p></div>)}

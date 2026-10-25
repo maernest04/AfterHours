@@ -49,7 +49,8 @@ def is_awaiting_proposal(db: AfterHoursDB, case_id: int) -> bool:
     if case is None or case['state'] not in {'MATCHING', 'INVESTIGATING'}:
         return False
     jobs = [job for job in list_jobs(db, case_id) if job['case_revision'] == case['input_revision']]
-    return bool(jobs) and all(job['status'] == 'SUCCEEDED' for job in jobs)
+    return (any(job['role'] == 'INVESTIGATION' for job in jobs)
+            and all(job['status'] == 'SUCCEEDED' for job in jobs))
 
 
 def mark_proposal_failure(db: AfterHoursDB, case_id: int, expected_revision: int, reason: str) -> None:

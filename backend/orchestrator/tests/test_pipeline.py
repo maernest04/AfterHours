@@ -10,7 +10,10 @@ from datetime import datetime, timedelta, timezone
 from afterhours_db.jobs import JobLease
 from afterhours_db.client import SpacetimeError
 
-from afterhours_orchestrator.pipeline import live_extraction_session, live_investigation_session, run_cycle
+from afterhours_investigation.mock import mock_investigation_session
+from afterhours_orchestrator.pipeline import (
+    investigation_from_env, live_extraction_session, live_investigation_session, run_cycle,
+)
 
 
 class Database:
@@ -50,6 +53,13 @@ def unavailable():
 
 
 class CycleTests(unittest.TestCase):
+    def test_clean_matching_cannot_calculate_without_investigation(self):
+        db = Database([case(1, 'MATCHING')], [job(1, 1, 'MATCHING', 'SUCCEEDED')])
+        with patch('afterhours_orchestrator.pipeline.build_proposal') as calculate:
+            result = run_cycle(db, db)
+        calculate.assert_not_called()
+        self.assertEqual(result.completed_proposals, [])
+
     def test_import_recovery_is_scoped_idempotent_and_never_fakes_extraction(self):
         db = Database([case(1), case(2)])
         first = run_cycle(db, db, case_id=2, matching_provider_factory=unavailable)
@@ -120,7 +130,7 @@ class CycleTests(unittest.TestCase):
 
     def test_calculation_recovers_ready_cases_and_respects_case_scope(self):
         db = Database([case(1, 'MATCHING'), case(2, 'MATCHING')],
-                      [job(1, 1, 'MATCHING', 'SUCCEEDED'), job(2, 2, 'MATCHING', 'SUCCEEDED')])
+                      [job(1, 1, 'INVESTIGATION', 'SUCCEEDED'), job(2, 2, 'INVESTIGATION', 'SUCCEEDED')])
         db.cases[1]['posting_period'] = '2024-02'
         db.cases[1]['input_revision'] = 3
         db.jobs[1]['case_revision'] = 3
@@ -156,7 +166,7 @@ class CycleTests(unittest.TestCase):
     def test_calculation_skips_blocked_incomplete_and_existing_proposal_cases(self):
         states = ['WAITING_FOR_INPUT', 'MATCHING', 'MATCHING', 'MATCHING', 'MATCHING']
         db = Database([case(i, state) for i, state in enumerate(states, 1)],
-                      [job(i, i, 'MATCHING', 'SUCCEEDED') for i in range(1, 6)])
+                      [job(i, i, 'INVESTIGATION', 'SUCCEEDED') for i in range(1, 6)])
         db.cases[1]['blockers'] = ['Missing amendment']
         db.jobs[2]['status'] = 'RUNNING'
         db.cases[3]['current_proposal_id'] = 9
@@ -169,7 +179,7 @@ class CycleTests(unittest.TestCase):
 
     def test_calculator_error_is_isolated_and_retried_on_next_poll(self):
         db = Database([case(1, 'MATCHING'), case(2, 'MATCHING')],
-                      [job(1, 1, 'MATCHING', 'SUCCEEDED'), job(2, 2, 'MATCHING', 'SUCCEEDED')])
+                      [job(1, 1, 'INVESTIGATION', 'SUCCEEDED'), job(2, 2, 'INVESTIGATION', 'SUCCEEDED')])
         attempts = []
 
         def calculate(db, case_id, revision, *, entry_date):
@@ -189,7 +199,7 @@ class CycleTests(unittest.TestCase):
         self.assertEqual(attempts, [1, 2, 1])
 
     def test_committed_proposal_with_lost_response_is_not_rebuilt(self):
-        db = Database([case(1, 'MATCHING')], [job(1, 1, 'MATCHING', 'SUCCEEDED')])
+        db = Database([case(1, 'MATCHING')], [job(1, 1, 'INVESTIGATION', 'SUCCEEDED')])
 
         def calculate(db, case_id, revision, *, entry_date):
             db.cases[0].update(state='READY_FOR_REVIEW', current_proposal_id=7)
@@ -205,14 +215,14 @@ class CycleTests(unittest.TestCase):
 
     def test_calculation_attempts_are_bounded_even_when_each_fails(self):
         db = Database([case(1, 'MATCHING'), case(2, 'MATCHING')],
-                      [job(1, 1, 'MATCHING', 'SUCCEEDED'), job(2, 2, 'MATCHING', 'SUCCEEDED')])
+                      [job(1, 1, 'INVESTIGATION', 'SUCCEEDED'), job(2, 2, 'INVESTIGATION', 'SUCCEEDED')])
         with patch('afterhours_orchestrator.pipeline.build_proposal', side_effect=ValueError('closed period')):
             report = run_cycle(db, db, max_jobs=1)
         self.assertEqual(report.errors, [{'case_id': 1, 'stage': 'CALCULATION', 'error': 'ValueError'}])
 
     def test_calculation_cursor_advances_past_failures_and_wraps_without_starvation(self):
         db = Database([case(i, 'MATCHING') for i in range(1, 4)],
-                      [job(i, i, 'MATCHING', 'SUCCEEDED') for i in range(1, 4)])
+                      [job(i, i, 'INVESTIGATION', 'SUCCEEDED') for i in range(1, 4)])
         attempts = []
 
         def calculate(db, case_id, revision, *, entry_date):
@@ -234,7 +244,7 @@ class CycleTests(unittest.TestCase):
 
     def test_calculation_cursor_preserves_case_scope_and_survives_empty_poll(self):
         db = Database([case(1, 'MATCHING'), case(2, 'MATCHING')],
-                      [job(1, 1, 'MATCHING', 'SUCCEEDED'), job(2, 2, 'MATCHING', 'SUCCEEDED')])
+                      [job(1, 1, 'INVESTIGATION', 'SUCCEEDED'), job(2, 2, 'INVESTIGATION', 'SUCCEEDED')])
         with patch('afterhours_orchestrator.pipeline.build_proposal',
                    return_value={'id': 7, 'case_id': 1}):
             scoped = run_cycle(db, db, case_id=1, calculation_after_case_id=1)
@@ -243,7 +253,7 @@ class CycleTests(unittest.TestCase):
         self.assertEqual(empty.last_calculation_case_id, 5)
 
     def test_ready_case_runs_gateway_proposal_builder(self):
-        db = Database([case(1, 'MATCHING')], [job(1, 1, 'MATCHING', 'SUCCEEDED')])
+        db = Database([case(1, 'MATCHING')], [job(1, 1, 'INVESTIGATION', 'SUCCEEDED')])
         calls = []
 
         def proposal_builder(database, case_id, revision, *, entry_date):
@@ -257,14 +267,14 @@ class CycleTests(unittest.TestCase):
         self.assertEqual(report.errors, [])
 
     def test_calculator_can_be_deferred_without_changing_case_state(self):
-        db = Database([case(1, 'MATCHING')], [job(1, 1, 'MATCHING', 'SUCCEEDED')])
+        db = Database([case(1, 'MATCHING')], [job(1, 1, 'INVESTIGATION', 'SUCCEEDED')])
         report = run_cycle(db, db, proposal_builder=None)
         self.assertEqual(report.completed_proposals, [])
         self.assertEqual(report.blocked, [{'case_id': 1, 'stage': 'CALCULATION'}])
         self.assertEqual(db.cases[0]['state'], 'MATCHING')
 
     def test_reducer_validation_failure_is_exposed_without_logging_private_payload(self):
-        db = Database([case(1, 'MATCHING')], [job(1, 1, 'MATCHING', 'SUCCEEDED')])
+        db = Database([case(1, 'MATCHING')], [job(1, 1, 'INVESTIGATION', 'SUCCEEDED')])
         with patch('afterhours_orchestrator.pipeline.build_proposal',
                    side_effect=SpacetimeError(530, 'private validation payload')), \
              patch('afterhours_orchestrator.pipeline.mark_proposal_failure') as mark:
@@ -367,6 +377,16 @@ class CycleTests(unittest.TestCase):
         for env in ({}, {'FACTORY_API_KEY': 'test'}, {'FACTORY_MODEL_ID': 'test'}):
             with patch.dict('os.environ', env, clear=True), self.assertRaises(ValueError):
                 asyncio.run(attempt())
+
+    def test_investigation_defaults_to_the_scripted_mock(self):
+        with patch.dict('os.environ', {}, clear=True):
+            session, model_run = investigation_from_env()
+        self.assertIs(session, mock_investigation_session)
+        self.assertEqual(model_run, 'REPLAYED')
+        with patch.dict('os.environ', {'INVESTIGATION_MODE': 'live'}, clear=True):
+            session, model_run = investigation_from_env()
+        self.assertIs(session, live_investigation_session)
+        self.assertEqual(model_run, 'LIVE')
 
 
 if __name__ == '__main__':

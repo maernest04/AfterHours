@@ -4,6 +4,12 @@ import { MockReviewAdapter } from "./mockReviewAdapter";
 import { nodesFor } from "./apiReviewAdapter";
 import type { CaseSnapshot } from "./reviewAdapter";
 
+it("walks mailbox, threads, then attachments across the 15s investigation mock", () => {
+  expect(nodesFor("INVESTIGATING").mailbox).toBe("running");
+  expect(nodesFor("INVESTIGATING", [], 5000).threads).toBe("running");
+  expect(nodesFor("INVESTIGATING", [], 10000).attachments).toBe("running");
+});
+
 it("follows active API stages and lands on review even when no node is running", () => {
   const base = new MockReviewAdapter().snapshot;
   for (const [api, status, expected] of [

@@ -12,8 +12,9 @@ Current boundaries are intentional:
   imported cases enter `EXTRACTING` with a queued job and stay there, reported as
   `blocked`; extraction is never faked. With it, the cycle claims EXTRACTION jobs,
   and MATCHING then follows through the normal database transitions.
-- Existing extracted fixtures can run MATCHING and, when questions remain,
-  INVESTIGATION. Investigation reads the existing mock mailbox through scoped
+- Every completed MATCHING job queues INVESTIGATION, including clean matches
+  with no unresolved questions. Investigation independently reads the governing
+  documents and verifies authority and dates before calculation. It reads the mock mailbox through scoped
   `AgentTools`; no real email integration or sending is enabled.
 - Resolved cases run the existing source-validated calculator and become
   `READY_FOR_REVIEW`, or `VERIFIED_NO_CHANGE` when the adjustment is zero.

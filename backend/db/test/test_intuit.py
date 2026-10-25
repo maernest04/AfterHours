@@ -1,7 +1,9 @@
 import json
 import unittest
 
-from afterhours_db.intuit import journal_entry, map_case, posted_entry, qbo_accounts
+from afterhours_db.intuit import (
+    journal_entry, map_case, posted_entry, qbo_accounts, qbo_numeric_id, resolve_qbo_vendor_id,
+)
 
 
 class IntuitMapTests(unittest.TestCase):
@@ -62,3 +64,29 @@ class IntuitMapTests(unittest.TestCase):
         ]
         self.assertEqual(qbo_accounts(accounts, {'expense_account': {'code': '6100'},
                                                  'liability_account': {'code': '2105'}}), ('10', '33'))
+
+    def test_ap_vendor_must_be_numeric_and_falls_back_to_demo_baseline(self):
+        accounts = [
+            {'Id': '69', 'AccountType': 'Expense', 'Name': 'Accounting', 'Active': True},
+            {'Id': '33', 'AccountType': 'Accounts Payable', 'Name': 'Accounts Payable (A/P)', 'Active': True},
+        ]
+        self.assertEqual(qbo_numeric_id('QBO-58'), '58')
+        self.assertIsNone(qbo_numeric_id('V-DEMO-79688b8c-49e6-439d-a1eb-8850fe7caf3f'))
+        self.assertIsNone(resolve_qbo_vendor_id(
+            {'vendor_id': 'V-DEMO-1'}, [{'Id': '88', 'AccountType': 'Other Current Liability'}], '88'))
+        self.assertEqual(resolve_qbo_vendor_id({'vendor_id': 'QBO-58'}, accounts, '33'), '58')
+        baseline = {'DocNumber': 'AH-DEMO-7000', 'Line': [
+            {'JournalEntryLineDetail': {'Entity': {'EntityRef': {'value': '58'}}}}]}
+        self.assertEqual(resolve_qbo_vendor_id(
+            {'vendor_id': 'V-DEMO-79688b8c-49e6-439d-a1eb-8850fe7caf3f'}, accounts, '33',
+            entries=[baseline]), '58')
+        with self.assertRaisesRegex(ValueError, 'numeric'):
+            journal_entry({
+                'hash': 'abc', 'entry_date': '2026-11-30', 'export_amount_cents': '70000',
+                'journal_lines': [
+                    {'account_name': 'Expense', 'debit_cents': '70000', 'credit_cents': '0'},
+                    {'account_name': 'A/P', 'debit_cents': '0', 'credit_cents': '70000'},
+                ],
+            }, '69', '33', vendor_id='V-DEMO-1')
+        with self.assertRaisesRegex(RuntimeError, 'numeric QuickBooks vendor'):
+            resolve_qbo_vendor_id({'vendor_id': 'V-DEMO-1'}, accounts, '33', entries=[])
