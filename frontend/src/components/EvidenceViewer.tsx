@@ -1,5 +1,7 @@
 import type { EvidenceRecord } from "../data/reviewAdapter";
 import { CloseButton } from "./ExecutionGraph";
+import { AccrualDocument, ContractDocument, SpreadsheetDocument } from "./AccountingDocument";
+import { parseCsv } from "../data/documentFormatting";
 export function EvidenceViewer({
   evidence,
   onClose,
@@ -7,6 +9,9 @@ export function EvidenceViewer({
   evidence: EvidenceRecord;
   onClose: () => void;
 }) {
+  const isCsv = evidence.mediaType?.includes("text/csv") || /\.csv$/i.test(evidence.name);
+  const isJson = evidence.mediaType?.includes("application/json") || /\.json$/i.test(evidence.name);
+  const citedRow = Number(evidence.reference.match(/\brow\s+(\d+)/i)?.[1]) || undefined;
   return (
     <dialog
       open
@@ -19,7 +24,7 @@ export function EvidenceViewer({
     >
       <div className="modal-head">
         <div>
-          <span className="eyebrow">Synthetic evidence · {evidence.type}</span>
+          <span className="eyebrow">Source evidence · {evidence.id}</span>
           <h2>{evidence.name}</h2>
         </div>
         <CloseButton onClick={onClose} />
@@ -29,7 +34,6 @@ export function EvidenceViewer({
       {evidence.mediaType?.includes("application/pdf") && evidence.sourceUrl && <iframe
         className="source-pdf" title={`Original PDF: ${evidence.name}`} src={evidence.sourceUrl}
       />}
-      {evidence.sourceText !== undefined && <section className="source-document"><h3>Original document</h3><pre>{evidence.sourceText}</pre></section>}
       <h3>Cited excerpt</h3>
       {evidence.sender && (
         <dl className="email-metadata">
@@ -46,6 +50,12 @@ export function EvidenceViewer({
         </dl>
       )}
       <pre className="evidence-excerpt">{evidence.excerpt}</pre>
+      {evidence.sourceText !== undefined && <section className="source-document formatted-evidence" aria-label="Formatted source document">
+        <h3>Source document {citedRow && <span className="cited-row-badge">Row {citedRow} highlighted</span>}</h3>
+        {isCsv ? <SpreadsheetDocument rows={parseCsv(evidence.sourceText)} highlight citedRow={citedRow} />
+          : isJson ? <AccrualDocument text={evidence.sourceText} highlight />
+          : <ContractDocument text={evidence.sourceText} highlight />}
+      </section>}
       <div className="evidence-finding">
         <strong>How this evidence is used</strong>
         <p>{evidence.disposition}</p>

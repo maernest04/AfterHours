@@ -3,6 +3,7 @@ import App from "./App";
 import { ApiReviewAdapter } from "./data/apiReviewAdapter";
 import { ReviewApi } from "./services/reviewApi";
 import { buildDemoPackage, type DemoScenario } from "./data/demoPackage";
+import { UploadPreview, documentLabel } from "./components/UploadPreview";
 
 const apiBase = import.meta.env.VITE_API_URL || "/api";
 
@@ -14,6 +15,7 @@ export default function ConnectedApp() {
     return /^[1-9][0-9]{0,19}$/.test(fromQuery) ? fromQuery : "";
   });
   const [files, setFiles] = useState<File[]>([]);
+  const [previewIndex, setPreviewIndex] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [scenario, setScenario] = useState<DemoScenario>("amendment");
@@ -72,11 +74,15 @@ export default function ConnectedApp() {
         </label>
         <button className="secondary demo-files-button" disabled={busy} onClick={() => void useDemoFiles()}>Use built-in demo files</button>
         <p className="small muted">Each demo package uses a separate synthetic vendor and includes its signed amendment. You can repeat runs without overlapping earlier reviews.</p>
-        {files.length > 0 && <ul className="selected-files">{files.map((file) => <li key={`${file.name}-${file.size}`}>{file.name}</li>)}</ul>}
+        {files.length > 0 && <><p className="upload-preview-hint">Click a document to preview it. Use the arrows to browse the full package.</p>
+          <ul className="selected-files upload-file-list">{files.map((file, index) => <li key={`${file.name}-${index}`}><button type="button" onClick={() => setPreviewIndex(index)}>
+            <strong>{documentLabel(file)}</strong><span>{file.name}</span><span className="upload-file-open">Preview ↗</span>
+          </button></li>)}</ul></>}
         <button className="primary start-button" disabled={!files.length || busy} onClick={() => void create()}>{busy ? "Creating review…" : "Create and watch review"}</button>
         {error && <p className="error" role="alert">{error}</p>}
         <p className="small muted">The browser only talks to the Python API. Provider credentials and database tokens remain server-side.</p>
       </div>
+      {previewIndex !== null && files[previewIndex] && <UploadPreview files={files} index={previewIndex} onIndex={setPreviewIndex} onClose={() => setPreviewIndex(null)} />}
     </main>
   );
 }
