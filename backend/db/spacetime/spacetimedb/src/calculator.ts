@@ -137,6 +137,18 @@ export const buildProposal = spacetimedb.reducer({
     state: adjustment === 0n ? 'VERIFIED_NO_CHANGE' : 'READY_FOR_REVIEW', updatedAt: ctx.timestamp });
 });
 
+/** Gateway-only: surface a deterministic proposal failure instead of leaving a case looking active. */
+export const markProposalFailure = spacetimedb.reducer({
+  caseId: t.u64(), expectedRevision: t.u32(), reason: t.string(),
+}, (ctx, a) => {
+  requireGateway(ctx);
+  const c = ctx.db.cases.id.find(a.caseId);
+  check(c && c.inputRevision === a.expectedRevision, 'Missing case or stale revision.');
+  check(['MATCHING', 'INVESTIGATING'].includes(c.state), 'Case is no longer awaiting a proposal.');
+  const reason = a.reason.slice(0, 240);
+  ctx.db.cases.id.update({ ...c, state: 'RETRYABLE_ERROR', blockers: [...c.blockers, `PROPOSAL_FAILED: ${reason}`], updatedAt: ctx.timestamp });
+});
+
 export const proposalsView = spacetimedb.view({ name: 'proposals_view', public: true }, t.array(proposals.rowType), ctx => {
   const company = companyForService(ctx);
   return company ? [...ctx.db.cases.companyId.filter(company)].flatMap(c => [...ctx.db.proposals.caseId.filter(c.id)]) : [];

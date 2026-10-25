@@ -75,7 +75,7 @@ export interface CaseSnapshot {
   inputRevision: number;
   status: CaseStatus;
   original: Minor;
-  originalStatus: "POSTED";
+  originalStatus: "DRAFT" | "POSTED";
   nodeStates: Record<string, NodeStatus>;
   transitions: string[];
   events: ReviewEvent[];
@@ -91,6 +91,8 @@ export interface CaseSnapshot {
   variant: Variant;
 }
 export interface ReviewAdapter {
+  readonly mode: "demo" | "api";
+  readonly snapshot: CaseSnapshot;
   subscribeCase(
     caseId: string,
     onSnapshot: (s: CaseSnapshot) => void,
@@ -109,6 +111,10 @@ export interface ReviewAdapter {
   ): Promise<void>;
   getEvidence(evidenceId: string): Promise<EvidenceRecord>;
   exportJournal(caseId: string, proposalVersion: number): Promise<Blob>;
+  reset(variant?: Variant): void;
+  pause(): void;
+  revise(): void;
+  dispose(): void;
 }
 export function acceptSnapshot(
   current: CaseSnapshot | null,

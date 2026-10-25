@@ -74,7 +74,12 @@ services:
     security_opt: ["no-new-privileges:true"]
 
   frontend:
-    build: ./frontend
+    build:
+      context: ./frontend
+      args:
+        VITE_REVIEW_ID: ${VITE_REVIEW_ID:-}
+        VITE_API_URL: ${VITE_API_URL:-/api}
+        VITE_CONNECTED_MODE: ${VITE_CONNECTED_MODE:-false}
     ports:
       - "127.0.0.1:${FRONTEND_PORT:-5173}:5173"
     init: true

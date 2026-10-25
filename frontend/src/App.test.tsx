@@ -129,7 +129,7 @@ describe("workspace interactions", () => {
     fireEvent.keyDown(window, { key: "Escape" });
     expect(screen.queryByRole("dialog")).toBe(null);
     fireEvent.keyDown(window, { key: "Escape" });
-    expect(screen.queryByRole("complementary")).toBe(null);
+    expect(screen.queryByRole("complementary", { name: "Step inspector" })).toBe(null);
   });
   it("preserves selection during updates when follow is off and supports expand/reset/overview", async () => {
     const a = new MockReviewAdapter("amendment", 10);

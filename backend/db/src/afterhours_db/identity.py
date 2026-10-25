@@ -49,8 +49,10 @@ def bootstrap(config: DatabaseConfig):
             ['6100', 'Contractor Services Expense'], ['2105', 'Accrued Liabilities'], '2026.10-demo'])
         owner.call_reducer('configure_job_policy', [int(os.getenv('JOB_LEASE_SECONDS', '30')),
                                                    int(os.getenv('JOB_MAX_ATTEMPTS', '3'))])
-        if not any(row['period'] == '2026-09' for row in owner.query('SELECT * FROM posting_periods')):
-            owner.call_reducer('configure_posting_period', ['2026-09', True])
+        open_periods = {row['period'] for row in owner.query('SELECT * FROM posting_periods')}
+        for period in ('2026-09', '2026-10', '2026-11'):
+            if period not in open_periods:
+                owner.call_reducer('configure_posting_period', [period, True])
         for client, role in ((gateway, 'GATEWAY'), (worker, 'WORKER')):
             identity = client.identity()
             # SATS-JSON encodes identity as a product containing a formatted u256 hex string.

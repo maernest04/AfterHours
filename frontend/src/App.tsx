@@ -14,6 +14,7 @@ import { ExecutionGraph, CloseButton } from "./components/ExecutionGraph";
 import { EvidenceViewer } from "./components/EvidenceViewer";
 import { ReviewPanel } from "./components/ReviewPanel";
 import { MockReviewAdapter } from "./data/mockReviewAdapter";
+import { ApiReviewAdapter } from "./data/apiReviewAdapter";
 import { CASE_ID, variants } from "./data/fixtures";
 import { steps } from "./data/topology";
 import {
@@ -22,6 +23,7 @@ import {
   type CaseSnapshot,
   type EvidenceRecord,
   type Variant,
+  type ReviewAdapter,
 } from "./data/reviewAdapter";
 const statusLabels: Record<CaseSnapshot["status"], string> = {
   ready: "Ready to review",
@@ -37,9 +39,13 @@ const statusLabels: Record<CaseSnapshot["status"], string> = {
 export default function App({
   providedAdapter,
 }: {
-  providedAdapter?: MockReviewAdapter;
+  providedAdapter?: ReviewAdapter;
 }) {
-  const [adapter] = useState(() => providedAdapter ?? new MockReviewAdapter());
+  const [adapter] = useState<ReviewAdapter>(() => providedAdapter ?? (
+    import.meta.env.VITE_REVIEW_ID
+      ? new ApiReviewAdapter(import.meta.env.VITE_REVIEW_ID, import.meta.env.VITE_API_URL || "/api")
+      : new MockReviewAdapter()
+  ));
   // Copy: the adapter mutates its own snapshot, so sharing it would make acceptSnapshot
   // see every update as stale and skip re-rendering.
   const [snapshot, setSnapshot] = useState<CaseSnapshot>(() => structuredClone(adapter.snapshot));
@@ -47,13 +53,13 @@ export default function App({
   const [selected, setSelected] = useState<string | null>(null);
   const [inspector, setInspector] = useState(false);
   const [expanded, setExpanded] = useState(false);
-  const [follow, setFollow] = useState(false);
+  const [follow, setFollow] = useState(adapter.mode === "api");
   const [evidence, setEvidence] = useState<EvidenceRecord | null>(null);
   const [error, setError] = useState("");
   const reviewRef = useRef<HTMLDivElement>(null);
   useEffect(
     () =>
-      adapter.subscribeCase(CASE_ID, (incoming) =>
+      adapter.subscribeCase(adapter.snapshot.caseId, (incoming) =>
         setSnapshot((current) => acceptSnapshot(current, incoming)),
       ),
     [adapter],
@@ -137,12 +143,12 @@ export default function App({
       <div className="demo-banner">
         <span>
           <Radio size={13} />
-          <strong>Synthetic demo</strong> · deterministic replay · no live
-          agents or email
+          <strong>{adapter.mode === "api" ? "Connected review" : "Synthetic demo"}</strong>
+          {adapter.mode === "api" ? " · backend pipeline" : " · deterministic replay · no live agents or email"}
         </span>
         <span className="connection">
           <i />
-          Mock adapter connected
+          {adapter.mode === "api" ? "Review API connected" : "Mock adapter connected"}
         </span>
       </div>
       <main>
@@ -307,7 +313,7 @@ export default function App({
                 {snapshot.status === "ready" ? (
                   <button
                     className="primary"
-                    onClick={() => void adapter.startReview(CASE_ID)}
+                    onClick={() => void adapter.startReview(adapter.snapshot.caseId)}
                   >
                     <Play size={14} />
                     Start review
@@ -330,7 +336,7 @@ export default function App({
                       className="secondary"
                       onClick={() => {
                         reset();
-                        void adapter.startReview(CASE_ID);
+                        void adapter.startReview(adapter.snapshot.caseId);
                       }}
                     >
                       <RotateCcw size={14} />
@@ -393,7 +399,7 @@ export default function App({
                   </div>
                   <h2>{step.label}</h2>
                   <p className="role-label">{step.role}</p>
-                  <p>{step.purpose}</p>
+                  <p>{["blocked", "waiting"].includes(snapshot.nodeStates[step.id]) && snapshot.blocker ? snapshot.blocker : step.purpose}</p>
                   {snapshot.nodeStates[step.id] === "dormant" && (
                     <div className="notice muted">
                       This alternative has not been visited in the current run.

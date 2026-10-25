@@ -7,15 +7,18 @@ from datetime import date
 import os
 import threading
 
-from afterhours_db.cases import is_awaiting_proposal, list_cases, start_review
+from afterhours_db.cases import is_awaiting_proposal, list_cases, mark_proposal_failure, start_review
 from afterhours_db.jobs import claim_job, list_claimable_jobs
+from afterhours_db.client import SpacetimeError
 from afterhours_agents.factory import FactoryProvider
 from afterhours_agents.worker import run_once as run_matching
 from afterhours_extraction.provider import bitdeer_session
 from afterhours_extraction.worker import run_job as run_extraction
 from afterhours_investigation.factory import factory_session
-from afterhours_investigation.worker import run_job as run_investigation
 from afterhours_investigation.calculator import build_proposal
+from afterhours_investigation.worker import run_job as run_investigation
+
+_DEFAULT_BUILDER = object()
 
 
 @dataclass
@@ -88,7 +91,7 @@ def run_cycle(gateway_db, worker_db, *, case_id=None, max_jobs=10, stop=None,
               matching_provider_factory=live_matching_provider,
               investigation_session=live_investigation_session, investigation_model_run='LIVE',
               investigation_timeout=180, extraction_session=None, extraction_model_run='LIVE',
-              extraction_timeout=240, calculation_after_case_id=None):
+              extraction_timeout=240, calculation_after_case_id=None, proposal_builder=_DEFAULT_BUILDER):
     """Recover imports, then attempt at most max_jobs ready jobs, scoped optionally.
 
     Providers can be injected for offline replay tests. The runtime defaults only
@@ -111,6 +114,8 @@ def run_cycle(gateway_db, worker_db, *, case_id=None, max_jobs=10, stop=None,
     if extraction_model_run not in {'LIVE', 'REPLAYED'} or not 0 < extraction_timeout <= 600:
         raise ValueError('Extraction needs LIVE/REPLAYED provenance and a timeout of 1-600 seconds')
     roles = ['MATCHING', 'INVESTIGATION'] + (['EXTRACTION'] if extraction_session else [])
+    if proposal_builder is _DEFAULT_BUILDER:
+        proposal_builder = build_proposal
     stop = stop if stop is not None else threading.Event()
     report = CycleReport(last_calculation_case_id=calculation_after_case_id)
     if stop.is_set():
@@ -171,6 +176,10 @@ def run_cycle(gateway_db, worker_db, *, case_id=None, max_jobs=10, stop=None,
             elif (case['state'] in {'MATCHING', 'INVESTIGATING'}
                   and not case['blockers'] and case['current_proposal_id'] is None
                   and calculation_attempts < max_jobs):
+                if proposal_builder is None:
+                    if is_awaiting_proposal(gateway_db, case['id']):
+                        report.blocked.append({'case_id': case['id'], 'stage': 'CALCULATION'})
+                    continue
                 try:
                     if not is_awaiting_proposal(gateway_db, case['id']):
                         continue
@@ -182,7 +191,7 @@ def run_cycle(gateway_db, worker_db, *, case_id=None, max_jobs=10, stop=None,
                     # period. Never substitute today's date or silently open periods.
                     period = date.fromisoformat(case['posting_period'] + '-01')
                     entry_date = period.replace(day=monthrange(period.year, period.month)[1]).isoformat()
-                    proposal = build_proposal(gateway_db, case['id'], case['input_revision'], entry_date=entry_date)
+                    proposal = proposal_builder(gateway_db, case['id'], case['input_revision'], entry_date=entry_date)
                     report.completed_proposals.append(proposal)
                 except Exception as error:
                     # Reducer/source validation failures stay visible and retryable;
@@ -190,4 +199,12 @@ def run_cycle(gateway_db, worker_db, *, case_id=None, max_jobs=10, stop=None,
                     report.errors.append({'case_id': case['id'], 'stage': 'CALCULATION',
                                           'error': type(error).__name__})
                     report.blocked.append({'case_id': case['id'], 'stage': 'CALCULATION'})
+                    # A reducer validation rejection needs an explicit UI blocker.
+                    # Transport/provider errors retain the teammate's retry behavior.
+                    if isinstance(error, SpacetimeError) and error.status_code == 530:
+                        try:
+                            mark_proposal_failure(gateway_db, case['id'], case['input_revision'],
+                                'Deterministic proposal validation failed; check source consistency.')
+                        except Exception:
+                            pass
     return report

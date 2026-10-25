@@ -32,6 +32,8 @@ import {
 import { regions, steps, links, edgeId, type Step } from "../data/topology";
 import { routeAll, NODE_H, NODE_W } from "../data/layout";
 import type { CaseSnapshot, NodeStatus } from "../data/reviewAdapter";
+import { LiveProgress } from "./LiveProgress";
+import { graphFocusStep } from "../data/graphFocus";
 import "@xyflow/react/dist/style.css";
 type WorkflowData = { step: Step; status: NodeStatus; onSelect: () => void };
 const WorkflowNode = memo(
@@ -140,6 +142,17 @@ function Graph({
 }) {
   const { zoom } = useViewport();
   const { fitView, zoomIn, zoomOut, setCenter } = useReactFlow();
+  const graphBody = useRef<HTMLDivElement>(null);
+  const [viewportReady, setViewportReady] = useState(false);
+  const [canvasSize, setCanvasSize] = useState({ width: 0, height: 0 });
+  const selectRef = useRef(onSelect);
+  selectRef.current = onSelect;
+  useEffect(() => {
+    if (!graphBody.current) return;
+    const observer = new ResizeObserver(([entry]) => setCanvasSize({ width: entry.contentRect.width, height: entry.contentRect.height }));
+    observer.observe(graphBody.current);
+    return () => observer.disconnect();
+  }, []);
   const [reducedMotion] = useState(
     () =>
       window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false,
@@ -228,19 +241,22 @@ function Graph({
       }),
     [snapshot.transitions, snapshot.nodeStates, snapshot.paused, travelling, fresh.join(), reducedMotion],
   );
-  const activeId = steps.find(
-    (s) => snapshot.nodeStates[s.id] === "running",
-  )?.id;
+  const activeId = graphFocusStep(snapshot);
   useEffect(() => {
-    if (follow && activeId) {
+    if (follow && viewportReady && canvasSize.width > 0) {
       const s = steps.find((x) => x.id === activeId)!;
-      onSelect(activeId);
-      void setCenter(s.x + NODE_W / 2, s.y + NODE_H / 2, {
+      selectRef.current(activeId);
+      // Allow the inspector to open and layout to settle before moving the camera.
+      const timer = setTimeout(() => {
+      const offset = canvasSize.width > 620 ? 155 / 0.95 : 0;
+      void setCenter(s.x + NODE_W / 2 - offset, s.y + NODE_H / 2, {
         zoom: 0.95,
-        duration: reducedMotion ? 0 : 300,
+        duration: reducedMotion ? 0 : 450,
       });
+      }, reducedMotion ? 0 : TRAVEL_MS);
+      return () => clearTimeout(timer);
     }
-  }, [activeId, follow]);
+  }, [activeId, follow, viewportReady, canvasSize.width, canvasSize.height, reducedMotion, setCenter]);
   return (
     <>
       <div className="graph-toolbar">
@@ -269,12 +285,13 @@ function Graph({
           </button>
         </div>
       </div>
-      <div className="graph-body">
+      <div className="graph-body" ref={graphBody}>
         <ReactFlow
           nodes={nodes}
           edges={edges}
           nodeTypes={nodeTypes}
           edgeTypes={edgeTypes}
+          onInit={() => setViewportReady(true)}
           onNodeClick={(_, node) =>
             node.type === "workflow" && onSelect(node.id)
           }
@@ -306,6 +323,7 @@ function Graph({
             Fit graph
           </button>
         </div>
+        <LiveProgress snapshot={snapshot} />
         <div className="pan-hint">
           Drag to pan · scroll to zoom · select any state
         </div>

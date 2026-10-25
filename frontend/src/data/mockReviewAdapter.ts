@@ -22,6 +22,7 @@ type Frame = {
   hold?: number;
 };
 export class MockReviewAdapter implements ReviewAdapter {
+  readonly mode = "demo" as const;
   private listeners = new Set<(s: CaseSnapshot) => void>();
   private timer: ReturnType<typeof setTimeout> | undefined;
   private frames: Frame[] = [];

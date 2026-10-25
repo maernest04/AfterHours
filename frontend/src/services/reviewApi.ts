@@ -1,6 +1,5 @@
-/** Actual Python API routes only. Not activated until the backend is implemented.
- * This transport never guesses workflow-node state or submits browser approvals.
- * The UI intentionally uses MockReviewAdapter; see README for the remaining mapping.
+/** Transport for the implemented Python review API.
+ * The browser can create and observe reviews; approval/export actions remain server-side.
  */
 export interface ApiJournalLine {
   entry_date: string;
@@ -60,12 +59,21 @@ export class ReviewApi {
       `${this.baseUrl.replace(/\/$/, "")}/${path}`,
       init,
     );
-    if (!response.ok)
+    if (!response.ok) {
+      const body = await response.text();
+      let detail = "";
+      try {
+        const parsed = JSON.parse(body) as { detail?: unknown };
+        detail = typeof parsed.detail === "string" ? parsed.detail : "";
+      } catch {
+        // Keep the status-only message when the server did not return JSON.
+      }
       throw new Error(
         response.status === 501
           ? "The Python review API is not implemented yet. Demo mode is available."
-          : `Review API returned HTTP ${response.status}.`,
+          : `Review API returned HTTP ${response.status}${detail ? `: ${detail}` : "."}`,
       );
+    }
     return response;
   }
   async create(files: File[]) {
@@ -138,11 +146,8 @@ export class ReviewApi {
         const snapshot = await this.get(id);
         if (!active) return;
         emit(snapshot);
-        const params = new URLSearchParams({
-          review_id: id,
-          live: "true",
-          after_sequence: String(lastSequence),
-        });
+        const params = new URLSearchParams({ review_id: id, live: "true" });
+        if (lastSequence) params.set("after_sequence", lastSequence);
         stream = new EventSource(
           `${this.baseUrl.replace(/\/$/, "")}/get-review?${params}`,
         );

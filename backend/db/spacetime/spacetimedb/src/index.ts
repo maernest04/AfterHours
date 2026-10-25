@@ -244,5 +244,5 @@ export {
   jobResultsView,
 } from './pipeline';
 
-export { configurePostingPeriod, buildProposal, proposalsView } from './calculator';
+export { configurePostingPeriod, buildProposal, markProposalFailure, proposalsView } from './calculator';
 export { importMailBatch, readMailEvidence } from './mailbox_access';

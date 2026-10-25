@@ -8,6 +8,7 @@ from unittest.mock import patch
 from datetime import datetime, timedelta, timezone
 
 from afterhours_db.jobs import JobLease
+from afterhours_db.client import SpacetimeError
 
 from afterhours_orchestrator.pipeline import live_extraction_session, live_investigation_session, run_cycle
 
@@ -240,6 +241,37 @@ class CycleTests(unittest.TestCase):
         self.assertEqual(scoped.completed_proposals, [{'id': 7, 'case_id': 1}])
         empty = run_cycle(Database([]), Database([]), calculation_after_case_id=5)
         self.assertEqual(empty.last_calculation_case_id, 5)
+
+    def test_ready_case_runs_gateway_proposal_builder(self):
+        db = Database([case(1, 'MATCHING')], [job(1, 1, 'MATCHING', 'SUCCEEDED')])
+        calls = []
+
+        def proposal_builder(database, case_id, revision, *, entry_date):
+            calls.append((database, case_id, revision, entry_date))
+            return {'id': 42}
+
+        report = run_cycle(db, db, proposal_builder=proposal_builder,
+                           matching_provider_factory=unavailable)
+        self.assertEqual(calls, [(db, 1, 1, '2026-09-30')])
+        self.assertEqual(report.completed_proposals, [{'id': 42}])
+        self.assertEqual(report.errors, [])
+
+    def test_calculator_can_be_deferred_without_changing_case_state(self):
+        db = Database([case(1, 'MATCHING')], [job(1, 1, 'MATCHING', 'SUCCEEDED')])
+        report = run_cycle(db, db, proposal_builder=None)
+        self.assertEqual(report.completed_proposals, [])
+        self.assertEqual(report.blocked, [{'case_id': 1, 'stage': 'CALCULATION'}])
+        self.assertEqual(db.cases[0]['state'], 'MATCHING')
+
+    def test_reducer_validation_failure_is_exposed_without_logging_private_payload(self):
+        db = Database([case(1, 'MATCHING')], [job(1, 1, 'MATCHING', 'SUCCEEDED')])
+        with patch('afterhours_orchestrator.pipeline.build_proposal',
+                   side_effect=SpacetimeError(530, 'private validation payload')), \
+             patch('afterhours_orchestrator.pipeline.mark_proposal_failure') as mark:
+            report = run_cycle(db, db)
+        mark.assert_called_once_with(db, 1, 1,
+            'Deterministic proposal validation failed; check source consistency.')
+        self.assertEqual(report.errors, [{'case_id': 1, 'stage': 'CALCULATION', 'error': 'SpacetimeError'}])
 
     def test_extraction_runs_only_with_a_session_or_bitdeer_key_and_feeds_matching(self):
         db = Database([case(1)])

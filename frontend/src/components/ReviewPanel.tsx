@@ -9,7 +9,7 @@ import {
 } from "lucide-react";
 import type { CaseSnapshot } from "../data/reviewAdapter";
 import { canExport, journalText, money } from "../data/reviewAdapter";
-import type { MockReviewAdapter } from "../data/mockReviewAdapter";
+import type { ReviewAdapter } from "../data/reviewAdapter";
 import { CASE_ID } from "../data/fixtures";
 export function ReviewPanel({
   snapshot: s,
@@ -17,7 +17,7 @@ export function ReviewPanel({
   onEvidence,
 }: {
   snapshot: CaseSnapshot;
-  adapter: MockReviewAdapter;
+  adapter: ReviewAdapter;
   onEvidence: (id: string) => void;
 }) {
   const [pending, setPending] = useState(false),
@@ -43,7 +43,7 @@ export function ReviewPanel({
   const downloadable = canExport(s) && s.exportEligible;
   const download = async () => {
     if (!p) return;
-    const blob = await adapter.exportJournal(CASE_ID, p.version);
+    const blob = await adapter.exportJournal(s.caseId, p.version);
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
@@ -182,7 +182,7 @@ export function ReviewPanel({
         <button
           className="primary"
           disabled={!canDecide}
-          onClick={() => void run(() => adapter.approve(CASE_ID, p.version))}
+          onClick={() => void run(() => adapter.approve(s.caseId, p.version))}
         >
           <Check size={15} />
           Approve
@@ -211,8 +211,8 @@ export function ReviewPanel({
             e.preventDefault();
             void run(() =>
               action === "reject"
-                ? adapter.reject(CASE_ID, p.version, reason)
-                : adapter.askQuestion(CASE_ID, p.version, question),
+                ? adapter.reject(s.caseId, p.version, reason)
+                : adapter.askQuestion(s.caseId, p.version, question),
             );
           }}
         >

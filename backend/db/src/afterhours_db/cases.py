@@ -52,6 +52,11 @@ def is_awaiting_proposal(db: AfterHoursDB, case_id: int) -> bool:
     return bool(jobs) and all(job['status'] == 'SUCCEEDED' for job in jobs)
 
 
+def mark_proposal_failure(db: AfterHoursDB, case_id: int, expected_revision: int, reason: str) -> None:
+    """Move a failed deterministic handoff out of an apparently active state."""
+    db.client.call_reducer('mark_proposal_failure', [case_id, expected_revision, reason[:240]])
+
+
 def _source(row: dict) -> list:
     return [row['document_id'], row['page_or_row'], row['excerpt']]
 
