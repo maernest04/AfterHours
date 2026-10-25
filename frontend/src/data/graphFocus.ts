@@ -2,6 +2,7 @@ import type { CaseSnapshot } from "./reviewAdapter";
 import { steps } from "./topology";
 
 export function graphFocusStep(snapshot: CaseSnapshot): string {
+  if (snapshot.presentationStep && snapshot.nodeStates[snapshot.presentationStep]) return snapshot.presentationStep;
   for (const status of ["blocked", "waiting", "running"] as const) {
     const active = steps.find(step => snapshot.nodeStates[step.id] === status);
     if (active) return active.id;

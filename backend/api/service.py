@@ -74,6 +74,13 @@ class ReviewService:
     def create_review(self, files: Sequence[ReviewUpload]) -> CreateReviewResponse:
         return self.repository.create_review(prepare_import(files))
 
+    def get_source(self, review_id: str, evidence_id: str):
+        if not re.fullmatch(r'[1-9][0-9]{0,19}', review_id) or int(review_id) >= 2**64:
+            raise InvalidCursor('Invalid review ID.')
+        if not re.fullmatch(r'fact:[1-9][0-9]{0,19}', evidence_id):
+            raise InvalidCursor('Invalid evidence ID.')
+        return self.repository.get_source(int(review_id), evidence_id)
+
     def list_reviews(self, *, limit: int = 10, cursor: str | None = None) -> ListReviewResponse:
         if not 1 <= limit <= 10:
             raise ValueError("Limit must be between 1 and 10.")

@@ -51,6 +51,25 @@ class SDKReviewRepository:
     def __init__(self, connect: Callable[[], "AfterHoursDB"] = connect_gateway):
         self._connect = connect
 
+    def get_source(self, review_id: int, evidence_id: str):
+        """Serve original bytes only for a fact in this review's current revision."""
+        from afterhours_db import get_case, list_facts
+        try:
+            with self._connect() as db:
+                case = get_case(db, review_id)
+                if case is None:
+                    raise ReviewNotFound('Review not found.')
+                fact = next((row for row in list_facts(db, review_id)
+                             if f"fact:{row['id']}" == evidence_id), None)
+                if fact is None:
+                    raise ReviewNotFound('Evidence not found in the current review.')
+                document, data = db.read_document(fact['document_id'])
+                return document.original_filename, document.media_type, data
+        except ReviewNotFound:
+            raise
+        except (OSError, RuntimeError, ValueError, KeyError, TypeError, HTTPError) as error:
+            raise RepositoryUnavailable('Source document unavailable.') from error
+
     def create_review(self, prepared: ReviewImport) -> CreateReviewResponse:
         from afterhours_db import finalize_import, list_cases
 

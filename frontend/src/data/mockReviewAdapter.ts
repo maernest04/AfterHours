@@ -278,7 +278,6 @@ export class MockReviewAdapter implements ReviewAdapter {
             agrees: "complete",
             unchanged: "complete",
             calculate: "skipped",
-            proposal: "skipped",
             review: "skipped",
             approved: "skipped",
             export: "skipped",
@@ -357,8 +356,8 @@ export class MockReviewAdapter implements ReviewAdapter {
         evidence: ["amendment", "excluded"],
       },
       {
-        nodes: { attachments: "complete", authority: "running" },
-        edges: [["attachments", "authority"]],
+        nodes: { attachments: "complete", amendment: "running" },
+        edges: [["attachments", "amendment"]],
         hold: 2,
         action: "Checking authority and effective date",
         outcome: "Validate authorized signatures and the work dates.",
@@ -369,8 +368,8 @@ export class MockReviewAdapter implements ReviewAdapter {
       return [
         ...frames,
         {
-          nodes: { authority: "blocked", conflict: "blocked" },
-          edges: [["authority", "conflict"]],
+          nodes: { amendment: "blocked", conflict: "blocked" },
+          edges: [["amendment", "conflict"]],
           status: "blocked",
           blocker:
             "Two authorized rate records conflict. A reviewer must resolve authority before calculation.",
@@ -380,8 +379,7 @@ export class MockReviewAdapter implements ReviewAdapter {
       ];
     frames.push(
       {
-        nodes: { authority: "complete", amendment: "complete" },
-        edges: [["authority", "amendment"]],
+        nodes: { amendment: "complete" },
         hold: 1.4,
         action: "Amendment verified",
         outcome:
@@ -397,8 +395,7 @@ export class MockReviewAdapter implements ReviewAdapter {
           "Deterministic fixture calculation: $7,700 target less $7,000 posted.",
       },
       {
-        nodes: { calculate: "complete", balance: "running" },
-        edges: [["calculate", "balance"]],
+        nodes: { calculate: "running" },
         proposal: true,
         hold: 1.6,
         action: "Validating journal and period",
@@ -410,8 +407,8 @@ export class MockReviewAdapter implements ReviewAdapter {
       return [
         ...frames,
         {
-          nodes: { balance: "blocked", rejected: "blocked" },
-          edges: [["balance", "rejected"]],
+          nodes: { calculate: "blocked", rejected: "blocked" },
+          edges: [["calculate", "rejected"]],
           status: "blocked",
           blocker:
             "September 2026 is closed in this fixture. Resolve the accounting-period gate before review.",
@@ -422,10 +419,9 @@ export class MockReviewAdapter implements ReviewAdapter {
     return [
       ...frames,
       {
-        nodes: { balance: "complete", proposal: "complete", review: "waiting" },
+        nodes: { calculate: "complete", review: "waiting" },
         edges: [
-          ["balance", "proposal"],
-          ["proposal", "review"],
+          ["calculate", "review"],
         ],
         status: "review",
         action: "Awaiting demo reviewer",

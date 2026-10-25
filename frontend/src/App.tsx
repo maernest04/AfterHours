@@ -13,6 +13,8 @@ import {
 import { ExecutionGraph, CloseButton } from "./components/ExecutionGraph";
 import { EvidenceViewer } from "./components/EvidenceViewer";
 import { ReviewPanel } from "./components/ReviewPanel";
+import { LiveProgress } from "./components/LiveProgress";
+import { useGraphTraversal } from "./components/useGraphTraversal";
 import { MockReviewAdapter } from "./data/mockReviewAdapter";
 import { ApiReviewAdapter } from "./data/apiReviewAdapter";
 import { variants } from "./data/fixtures";
@@ -59,6 +61,9 @@ export default function App({
   const [inspector, setInspector] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const [follow, setFollow] = useState(adapter.mode === "api");
+  const [sidebarTab, setSidebarTab] = useState<"pipeline" | "correction">("pipeline");
+  const [reducedMotion] = useState(() => window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false);
+  const graphSnapshot = useGraphTraversal(snapshot, reducedMotion);
   const [evidence, setEvidence] = useState<EvidenceRecord | null>(null);
   const [error, setError] = useState("");
   const reviewRef = useRef<HTMLDivElement>(null);
@@ -401,7 +406,7 @@ export default function App({
             >
               <div className="graph-panel">
                 <ExecutionGraph
-                  snapshot={snapshot}
+                  snapshot={graphSnapshot}
                   selected={selected}
                   onSelect={select}
                   expanded={expanded}
@@ -472,13 +477,14 @@ export default function App({
                     "question",
                     "rejected",
                     "calculate",
-                    "balance",
+                    "amendment",
                   ].includes(step.id) && (
                     <button
                       className="primary"
                       onClick={() => {
                         setExpanded(false);
                         setInspector(false);
+                        setSidebarTab("correction");
                         setTimeout(
                           () =>
                             reviewRef.current?.scrollIntoView({
@@ -501,8 +507,21 @@ export default function App({
                   </div>
                 </aside>
               )}
-            </section>
-            <div className="detail-grid">
+              <div className="workspace-sidebar" aria-label="Review details">
+                <div className="sidebar-tabs" role="tablist" aria-label="Review details tabs">
+                  <button id="pipeline-tab" role="tab" aria-selected={sidebarTab === "pipeline"} aria-controls="pipeline-panel"
+                    onClick={() => setSidebarTab("pipeline")}
+                    onKeyDown={(event) => { if (["ArrowRight", "ArrowLeft", "End"].includes(event.key)) { event.preventDefault(); setSidebarTab("correction"); document.getElementById("correction-tab")?.focus(); } }}
+                  >Live pipeline</button>
+                  <button id="correction-tab" role="tab" aria-selected={sidebarTab === "correction"} aria-controls="correction-panel"
+                    onClick={() => setSidebarTab("correction")}
+                    onKeyDown={(event) => { if (["ArrowRight", "ArrowLeft", "Home"].includes(event.key)) { event.preventDefault(); setSidebarTab("pipeline"); document.getElementById("pipeline-tab")?.focus(); } }}
+                  >Proposed correction{snapshot.proposal && <span className="sidebar-ready-dot" aria-label="Proposal available" />}</button>
+                </div>
+                <div id="pipeline-panel" role="tabpanel" aria-labelledby="pipeline-tab" hidden={sidebarTab !== "pipeline"}>
+                  <LiveProgress snapshot={graphSnapshot} />
+                </div>
+                <div id="correction-panel" role="tabpanel" aria-labelledby="correction-tab" hidden={sidebarTab !== "correction"}>
               <div ref={reviewRef} className="review-card">
                 <ReviewPanel
                   key={snapshot.runId}
@@ -511,13 +530,17 @@ export default function App({
                   onEvidence={(id) => void openEvidence(id)}
                 />
               </div>
+                </div>
+              </div>
+            </section>
+            <div className="detail-grid">
               <section className="activity-panel">
                 <div className="section-heading">
                   <h2>Activity</h2>
                   <span className="mono">{snapshot.events.length} events</span>
                 </div>
                 <p className="small muted">
-                  Timestamped fixture events · replayed
+                  {adapter.mode === "api" ? "Observed pipeline checkpoints" : "Timestamped demo events"}
                 </p>
                 {snapshot.events.length === 0 ? (
                   <div className="empty-activity">

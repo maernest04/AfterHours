@@ -23,5 +23,5 @@ it("follows active API stages and lands on review even when no node is running",
 it("focuses the failing proposal rather than a previously completed step", () => {
   const snapshot: CaseSnapshot = { ...new MockReviewAdapter().snapshot, status: "blocked",
     nodeStates: nodesFor("RETRYABLE_ERROR", ["PROPOSAL_FAILED: validation failed"]) };
-  expect(graphFocusStep(snapshot)).toBe("proposal");
+  expect(graphFocusStep(snapshot)).toBe("calculate");
 });

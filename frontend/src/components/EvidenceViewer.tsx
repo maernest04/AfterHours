@@ -1,4 +1,3 @@
-import { useEffect, useRef } from "react";
 import type { EvidenceRecord } from "../data/reviewAdapter";
 import { CloseButton } from "./ExecutionGraph";
 export function EvidenceViewer({
@@ -8,13 +7,10 @@ export function EvidenceViewer({
   evidence: EvidenceRecord;
   onClose: () => void;
 }) {
-  const dialog = useRef<HTMLDialogElement>(null);
-  useEffect(() => {
-    dialog.current?.showModal();
-  }, []);
   return (
     <dialog
-      ref={dialog}
+      open
+      aria-label="Source document viewer"
       className="evidence-dialog"
       onCancel={onClose}
       onClick={(e) => {
@@ -29,6 +25,12 @@ export function EvidenceViewer({
         <CloseButton onClick={onClose} />
       </div>
       <p className="source-ref">{evidence.reference}</p>
+      {evidence.sourceUrl && <a className="source-open-link" href={evidence.sourceUrl} target="_blank" rel="noopener noreferrer">Open original in new tab ↗</a>}
+      {evidence.mediaType?.includes("application/pdf") && evidence.sourceUrl && <iframe
+        className="source-pdf" title={`Original PDF: ${evidence.name}`} src={evidence.sourceUrl}
+      />}
+      {evidence.sourceText !== undefined && <section className="source-document"><h3>Original document</h3><pre>{evidence.sourceText}</pre></section>}
+      <h3>Cited excerpt</h3>
       {evidence.sender && (
         <dl className="email-metadata">
           <dt>From</dt>
@@ -48,10 +50,10 @@ export function EvidenceViewer({
         <strong>How this evidence is used</strong>
         <p>{evidence.disposition}</p>
       </div>
-      <p className="muted small">
+      {!evidence.sourceUrl && <p className="muted small">
         Excerpt available. Original document bytes are not included in this
         demo; a full preview is unavailable.
-      </p>
+      </p>}
       <button className="secondary" onClick={onClose}>
         Close evidence
       </button>

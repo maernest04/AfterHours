@@ -14,9 +14,10 @@ describe("deterministic review, version gates and generic CSV", () => {
     await vi.runAllTimersAsync();
     return a;
   }
-  it("has exactly 28 visible states with branches and cycles", () => {
-    expect(steps).toHaveLength(28);
-    expect(new Set(steps.map((s) => s.id)).size).toBe(28);
+  it("has 25 distinct states after combining amendment and proposal checks", () => {
+    expect(steps).toHaveLength(25);
+    expect(new Set(steps.map((s) => s.id)).size).toBe(25);
+    expect(steps.some(s => ["authority", "balance", "proposal"].includes(s.id))).toBe(false);
     expect(links.filter((l) => l.source === "read")).toHaveLength(4);
     expect(links).toContainEqual(
       expect.objectContaining({

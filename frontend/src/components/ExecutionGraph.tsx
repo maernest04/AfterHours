@@ -32,7 +32,6 @@ import {
 import { regions, steps, links, edgeId, type Step } from "../data/topology";
 import { routeAll, NODE_H, NODE_W } from "../data/layout";
 import type { CaseSnapshot, NodeStatus } from "../data/reviewAdapter";
-import { LiveProgress } from "./LiveProgress";
 import { graphFocusStep } from "../data/graphFocus";
 import "@xyflow/react/dist/style.css";
 type WorkflowData = { step: Step; status: NodeStatus; onSelect: () => void };
@@ -122,7 +121,7 @@ const RoutedEdge = ({ id, data, markerEnd, style }: EdgeProps<Edge<RouteData>>) 
 const edgeTypes = { routed: RoutedEdge };
 const routes = routeAll(steps, links);
 function Graph({
-  snapshot,
+  snapshot: liveSnapshot,
   selected,
   onSelect,
   expanded,
@@ -144,6 +143,7 @@ function Graph({
   const { fitView, zoomIn, zoomOut, setCenter } = useReactFlow();
   const graphBody = useRef<HTMLDivElement>(null);
   const [viewportReady, setViewportReady] = useState(false);
+  const initialOverview = useRef(false);
   const [canvasSize, setCanvasSize] = useState({ width: 0, height: 0 });
   const selectRef = useRef(onSelect);
   selectRef.current = onSelect;
@@ -157,6 +157,7 @@ function Graph({
     () =>
       window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false,
   );
+  const snapshot = liveSnapshot;
   // A newly traversed edge first carries a dot to its target; the target box keeps
   // its previous look until the dot arrives, then lights up.
   const [travelling, setTravelling] = useState<string[]>([]);
@@ -205,6 +206,7 @@ function Graph({
           onSelect: () => onSelect(s.id),
         },
         selected: s.id === selected,
+        className: s.id === "calculate" ? "calculation-stage" : undefined,
         draggable: false,
         ariaLabel: `${s.label}, ${status(s.id)}`,
       })),
@@ -243,20 +245,25 @@ function Graph({
   );
   const activeId = graphFocusStep(snapshot);
   useEffect(() => {
+    if (viewportReady && canvasSize.width > 0 && !initialOverview.current) {
+      initialOverview.current = true;
+      void fitView({ padding: 0.08, minZoom: 0.05, maxZoom: 1 });
+      return;
+    }
+    if (snapshot.status === "ready") return;
     if (follow && viewportReady && canvasSize.width > 0) {
       const s = steps.find((x) => x.id === activeId)!;
       selectRef.current(activeId);
       // Allow the inspector to open and layout to settle before moving the camera.
       const timer = setTimeout(() => {
-      const offset = canvasSize.width > 620 ? 155 / 0.95 : 0;
-      void setCenter(s.x + NODE_W / 2 - offset, s.y + NODE_H / 2, {
+      void setCenter(s.x + NODE_W / 2, s.y + NODE_H / 2, {
         zoom: 0.95,
         duration: reducedMotion ? 0 : 450,
       });
       }, reducedMotion ? 0 : TRAVEL_MS);
       return () => clearTimeout(timer);
     }
-  }, [activeId, follow, viewportReady, canvasSize.width, canvasSize.height, reducedMotion, setCenter]);
+  }, [activeId, follow, viewportReady, canvasSize.width, canvasSize.height, reducedMotion, setCenter, fitView, snapshot.status]);
   return (
     <>
       <div className="graph-toolbar">
@@ -295,8 +302,9 @@ function Graph({
           onNodeClick={(_, node) =>
             node.type === "workflow" && onSelect(node.id)
           }
-          defaultViewport={{ x: 280, y: 10, zoom: 0.75 }}
-          minZoom={0.15}
+          fitView
+          fitViewOptions={{ padding: 0.08, minZoom: 0.05, maxZoom: 1 }}
+          minZoom={0.05}
           maxZoom={1.8}
           nodesConnectable={false}
           nodesFocusable={false}
@@ -323,7 +331,6 @@ function Graph({
             Fit graph
           </button>
         </div>
-        <LiveProgress snapshot={snapshot} />
         <div className="pan-hint">
           Drag to pan · scroll to zoom · select any state
         </div>

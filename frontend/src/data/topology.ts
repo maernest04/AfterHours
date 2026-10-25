@@ -24,8 +24,8 @@ const section = (name: string, b: number, first: number, last: number) => {
 export const regions = [
   section("Ingest & normalize", 0, 0, 4),
   section("Match & validate", 1, 5, 6),
-  section("Investigate", 2, 7, 11),
-  section("Correct & review", 3, 12, 17),
+  section("Investigate", 2, 7, 10),
+  section("Correct & review", 3, 11, 14),
 ];
 export const steps: Step[] = [
   {
@@ -181,25 +181,15 @@ export const steps: Step[] = [
     evidence: ["amendment"],
   },
   {
-    id: "authority",
-    label: "Authorized & effective?",
-    role: "Decision guard",
+    id: "amendment",
+    label: "Verify amendment authority & dates",
+    role: "Evidence & authority check",
     purpose:
-      "Require an authorized signature and an effective date covering the approved work. An unapproved request never changes the rate.",
+      "Verify the signed amendment, authorized signatory, effective dates, and qualifying work together. Unapproved rate requests never change the rate; conflicting authority blocks calculation.",
     region: 2,
     ...at(2, SPINE, 10),
-    evidence: ["amendment", "excluded"],
+    evidence: ["amendment", "work", "excluded"],
     kind: "guard",
-  },
-  {
-    id: "amendment",
-    label: "Verify the amendment",
-    role: "Evidence check",
-    purpose:
-      "The signed $110 amendment is effective September 15. All 70 approved hours qualify.",
-    region: 2,
-    ...at(2, SPINE, 11),
-    evidence: ["amendment", "work"],
   },
   {
     id: "retry",
@@ -236,34 +226,13 @@ export const steps: Step[] = [
   },
   {
     id: "calculate",
-    label: "Calculate correction",
-    role: "Deterministic code",
+    label: "Calculate & save proposal",
+    role: "Calculation & validation",
     purpose:
-      "Use exact minor units: target $7,700 minus posted $7,000 equals a $700 adjustment. The browser displays fixture/backend calculations.",
+      "Calculate the adjustment in exact cents, validate the posting period and balanced debit/credit lines, then save a versioned, hashed proposal tied to its evidence and input revision. Validation failures block review and export.",
     region: 3,
-    ...at(3, SPINE, 12),
+    ...at(3, SPINE, 11),
     evidence: ["ledger", "amendment", "work"],
-  },
-  {
-    id: "balance",
-    label: "Period + balance valid?",
-    role: "Deterministic guard",
-    purpose:
-      "Verify the September period and balanced debit/credit lines. A failed validation blocks review and export.",
-    region: 3,
-    ...at(3, SPINE, 13),
-    evidence: [],
-    kind: "guard",
-  },
-  {
-    id: "proposal",
-    label: "Save proposal",
-    role: "Versioned · hashed",
-    purpose:
-      "Persist an immutable, hashed proposal bound to the input revision and policy version. Any later input change creates a new version.",
-    region: 3,
-    ...at(3, SPINE, 14),
-    evidence: ["ledger", "amendment"],
   },
   {
     id: "approved",
@@ -272,7 +241,7 @@ export const steps: Step[] = [
     purpose:
       "An approval binds to this exact proposal hash and revision. It never posts anything; it only unlocks export of the approved version.",
     region: 3,
-    ...at(3, SPINE, 16),
+    ...at(3, SPINE, 13),
     evidence: [],
   },
   {
@@ -282,7 +251,7 @@ export const steps: Step[] = [
     purpose:
       "A human email decision binds to the current proposal version. Demo controls simulate an acknowledged email event only.",
     region: 3,
-    ...at(3, SPINE, 15),
+    ...at(3, SPINE, 12),
     evidence: ["amendment", "ledger"],
   },
   {
@@ -292,7 +261,7 @@ export const steps: Step[] = [
     purpose:
       "Ask why returns a concise, cited explanation and then resumes pending review. It is neither approval nor rejection.",
     region: 3,
-    ...at(3, 3, 15),
+    ...at(3, 3, 12),
     evidence: ["amendment", "excluded"],
   },
   {
@@ -302,7 +271,7 @@ export const steps: Step[] = [
     purpose:
       "Keep the rejection reason and old proposal. Material input changes invalidate approval and rerun affected checks; a new version needs fresh approval.",
     region: 3,
-    ...at(3, 0, 15),
+    ...at(3, 0, 12),
     evidence: [],
     kind: "exception",
   },
@@ -313,7 +282,7 @@ export const steps: Step[] = [
     purpose:
       "Only current, valid, approved adjustments can export. CSV may require account mapping. Download does not post or pay anything.",
     region: 3,
-    ...at(3, SPINE, 17),
+    ...at(3, SPINE, 14),
     evidence: [],
   },
 ];
@@ -418,25 +387,22 @@ export const links: Link[] = [
     },
   },
   { source: "threads", target: "attachments" },
-  { source: "attachments", target: "authority" },
-  { source: "authority", target: "amendment", label: "valid" },
-  { source: "authority", target: "conflict", label: "conflict" },
+  { source: "attachments", target: "amendment" },
+  { source: "amendment", target: "conflict", label: "conflict" },
   // Label sits in the gap between stages, clear of the next stage border.
   { source: "amendment", target: "calculate", label: "supported", route: { labelAt: 0.38 } },
-  { source: "calculate", target: "balance" },
-  { source: "balance", target: "proposal", label: "valid" },
-  { source: "proposal", target: "review" },
+  { source: "calculate", target: "review", label: "valid" },
   { source: "review", target: "approved", label: "approve" },
   { source: "approved", target: "export" },
   {
-    source: "balance",
+    source: "calculate",
     target: "rejected",
     label: "invalid",
     route: {
       from: "left",
       to: "top",
       labelAt: 0.4,
-      via: [{ x: pt("rejected", "top").x, y: pt("balance", "left").y }],
+      via: [{ x: pt("rejected", "top").x, y: pt("calculate", "left").y }],
     },
   },
   { source: "review", target: "rejected", label: "reject" },

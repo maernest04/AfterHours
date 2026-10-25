@@ -32,7 +32,7 @@ export function nodesFor(status: ApiReview["status"], blockers: string[] = []): 
   set("import", "complete");
   if (["NEEDS_REVISION", "RETRYABLE_ERROR", "FAILED"].includes(status)) {
     const proposalFailure = blockers.some((b) => b.startsWith("PROPOSAL_FAILED:"));
-    set(proposalFailure ? "proposal" : status === "NEEDS_REVISION" ? "rejected" : "retry", "blocked");
+    set(proposalFailure ? "calculate" : status === "NEEDS_REVISION" ? "rejected" : "retry", "blocked");
     return nodes;
   }
   if (status === "IMPORTED") return nodes;
@@ -48,7 +48,7 @@ export function nodesFor(status: ApiReview["status"], blockers: string[] = []): 
     return nodes;
   }
   if (["READY_FOR_REVIEW", "APPROVED", "EXPORTED", "VERIFIED_NO_CHANGE"].includes(status)) {
-    for (const id of ["mailbox", "threads", "attachments", "authority", "amendment", "calculate", "balance", "proposal", "review"]) set(id, "complete");
+    for (const id of ["mailbox", "threads", "attachments", "amendment", "calculate", "review"]) set(id, "complete");
   }
   return nodes;
 }
@@ -60,9 +60,9 @@ function transitionsFor(status: ApiReview["status"]): string[] {
   if (status === "EXTRACTING") return transitions;
   transitions.push(edgeId("schema", "match"), edgeId("match", "agrees"));
   if (status === "MATCHING") return transitions;
-  transitions.push(edgeId("agrees", "mailbox"), edgeId("mailbox", "threads"), edgeId("threads", "attachments"), edgeId("attachments", "authority"), edgeId("authority", "amendment"));
+  transitions.push(edgeId("agrees", "mailbox"), edgeId("mailbox", "threads"), edgeId("threads", "attachments"), edgeId("attachments", "amendment"));
   if (status === "INVESTIGATING" || status === "WAITING_FOR_INPUT") return transitions;
-  transitions.push(edgeId("amendment", "calculate"), edgeId("calculate", "balance"), edgeId("balance", "proposal"), edgeId("proposal", "review"));
+  transitions.push(edgeId("amendment", "calculate"), edgeId("calculate", "review"));
   return transitions;
 }
 
@@ -148,12 +148,14 @@ export class ApiReviewAdapter implements ReviewAdapter {
   readonly snapshot: CaseSnapshot;
   private revision = 0;
   private readonly api: ReviewApi;
+  private readonly baseUrl: string;
   private readonly checkpoints = new Map<string, ReviewEvent>();
   private latest: ApiReview | null = null;
   private postedHash: string | null = null;
   private emit: ((snapshot: CaseSnapshot) => void) | null = null;
 
   constructor(private readonly reviewId: string, baseUrl = "/api") {
+    this.baseUrl = baseUrl;
     this.api = new ReviewApi(baseUrl);
     this.snapshot = {
       caseId: reviewId,
@@ -216,9 +218,18 @@ export class ApiReviewAdapter implements ReviewAdapter {
     const review = await this.api.get(this.reviewId);
     const evidence = review.evidence.find((item) => item.evidence_id === evidenceId);
     if (!evidence) throw new Error("Evidence is not available in this API snapshot.");
+    const sourceUrl = `${this.baseUrl.replace(/\/$/, "")}/review-source?${new URLSearchParams({ review_id: this.reviewId, evidence_id: evidenceId })}`;
+    const response = await fetch(sourceUrl);
+    if (!response.ok) throw new Error(`Source document unavailable (HTTP ${response.status}).`);
+    const mediaType = response.headers.get("Content-Type") || "text/plain";
+    const disposition = response.headers.get("Content-Disposition") || "";
+    const filename = disposition.match(/filename\*=UTF-8''([^;]+)/i)?.[1];
     return {
       id: evidence.evidence_id,
-      name: evidence.document_id,
+      name: filename ? decodeURIComponent(filename) : `Document ${evidence.document_id}`,
+      sourceUrl,
+      sourceText: mediaType.includes("application/pdf") ? undefined : await response.text(),
+      mediaType,
       type: "source",
       reference: evidence.page_or_row,
       excerpt: evidence.excerpt,

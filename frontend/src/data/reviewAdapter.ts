@@ -27,6 +27,9 @@ export type Variant =
   | "conflicting-authority"
   | "invalid-period";
 export interface EvidenceRecord {
+  sourceUrl?: string;
+  sourceText?: string;
+  mediaType?: string;
   id: string;
   name: string;
   type: string;
@@ -70,6 +73,8 @@ export interface ReviewEvent {
   proposalVersion?: number;
 }
 export interface CaseSnapshot {
+  /** Display-only playback of checks confirmed by the latest API snapshot. */
+  presentationStep?: string;
   caseId: string;
   runId: string;
   revision: number;

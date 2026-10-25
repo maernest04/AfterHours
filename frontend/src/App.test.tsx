@@ -81,6 +81,20 @@ afterEach(() => {
   vi.useRealTimers();
 });
 describe("workspace interactions", () => {
+  it("keeps pipeline and correction in sidebar tabs without covering the graph", () => {
+    const { container } = render(<App providedAdapter={new MockReviewAdapter()} />);
+    const pipeline = screen.getByRole("tab", { name: "Live pipeline" });
+    const correction = screen.getByRole("tab", { name: "Proposed correction" });
+    expect(pipeline.getAttribute("aria-selected")).toBe("true");
+    expect(container.querySelector(".graph-body .live-progress")).toBe(null);
+    expect(container.querySelector(".workspace-sidebar .live-progress")).toBeTruthy();
+    fireEvent.click(correction);
+    expect(screen.getByRole("tabpanel", { name: "Proposed correction" })).toBeTruthy();
+    expect(screen.queryByRole("tabpanel", { name: "Live pipeline" })).toBe(null);
+    fireEvent.keyDown(correction, { key: "ArrowLeft" });
+    expect(screen.getByRole("tabpanel", { name: "Live pipeline" })).toBeTruthy();
+    expect(document.activeElement).toBe(pipeline);
+  });
   it("lights a box only after the travelling dot reaches it", async () => {
     const a = new MockReviewAdapter("amendment", 1000);
     render(<App providedAdapter={a} />);
@@ -108,11 +122,11 @@ describe("workspace interactions", () => {
     ].filter((p) => p.style.strokeDasharray === "");
     expect(done.length).toBeGreaterThan(10);
   });
-  it("renders all 28 branch states, inspects dormant evidence and closes with Escape", async () => {
+  it("renders all 25 branch states, inspects dormant evidence and closes with Escape", async () => {
     const a = new MockReviewAdapter("amendment", 10);
     render(<App providedAdapter={a} />);
     expect(screen.getAllByRole("button", { name: /, dormant$/ })).toHaveLength(
-      28,
+      25,
     );
     const invoice = screen.getByRole("button", {
       name: "Invoice coverage, dormant",

@@ -108,6 +108,18 @@ class ReviewTests(unittest.IsolatedAsyncioTestCase):
                          ['ACCRUAL', 'CONTRACT', 'TIMESHEET', 'INVOICE', 'LEDGER'])
         self.assertEqual(self.db.read_document(1)[1], (SEED / 'acme_accrual_2026-09.json').read_bytes())
 
+    async def test_source_returns_original_bytes_and_rejects_unrelated_facts(self):
+        await self.create()
+        fact = self.db_client.tables['facts'][0]
+        response = await self.client.get('/review-source', params={'review_id': '1', 'evidence_id': f"fact:{fact['id']}"})
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.content, self.db.read_document(fact['document_id'])[1])
+        self.assertIn('inline', response.headers['content-disposition'])
+        self.assertEqual(response.headers['x-content-type-options'], 'nosniff')
+        for review, evidence in [('2', f"fact:{fact['id']}"), ('1', 'fact:999'), ('1', 'doc:1')]:
+            denied = await self.client.get('/review-source', params={'review_id': review, 'evidence_id': evidence})
+            self.assertIn(denied.status_code, (404, 422))
+
     async def test_invalid_later_file_is_rejected_before_any_write(self):
         files = uploads() + [ReviewUpload('unknown.csv', 'text/csv', 10, io.BytesIO(b'amount\n12\n'))]
         response = await self.create(files)

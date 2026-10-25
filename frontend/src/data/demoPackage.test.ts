@@ -30,7 +30,7 @@ describe("repeatable demo packages", () => {
 
 it("maps a proposal failure to the proposal node rather than invalid source", () => {
   const nodes = nodesFor("RETRYABLE_ERROR", ["PROPOSAL_FAILED: Another posted case may cover the same work."]);
-  expect(nodes.proposal).toBe("blocked");
+  expect(nodes.calculate).toBe("blocked");
   expect(nodes.invalid).toBe("dormant");
   expect(nodes.match).toBe("dormant");
 });

@@ -1,6 +1,7 @@
 """Review data plane: SDK-backed summaries and explicit workflow integration seams."""
 
 from typing import Annotated
+from urllib.parse import quote
 
 from fastapi import Depends, FastAPI, File, HTTPException, Query, Request, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -171,4 +172,14 @@ async def export_review(review_id: Identifier, service: Service):
     export = await run_in_threadpool(service.export_review, review_id)
     return Response(export.content, media_type="text/csv", headers={
         "Content-Disposition": f'attachment; filename="{export.filename}"',
+    })
+
+
+@app.get('/review-source')
+async def review_source(review_id: Identifier, evidence_id: Identifier, service: Service):
+    filename, media_type, data = await run_in_threadpool(service.get_source, review_id, evidence_id)
+    return Response(data, media_type=media_type, headers={
+        'Content-Disposition': f"inline; filename*=UTF-8''{quote(filename, safe='')}",
+        'X-Content-Type-Options': 'nosniff',
+        'Cache-Control': 'private, no-store',
     })

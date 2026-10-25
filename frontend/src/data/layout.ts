@@ -5,11 +5,11 @@
 // edge may pass through a node it does not connect, and labels never collide.
 import type { Link, Step } from "./topology";
 
-export const NODE_W = 195;
-export const NODE_H = 96;
-export const COL = 260; // column pitch
+export const NODE_W = 240;
+export const NODE_H = 116;
+export const COL = 310; // column pitch
 export const X0 = 150;
-export const ROW_H = 150; // row pitch (54px gaps hold edge labels)
+export const ROW_H = 180; // row pitch leaves room for readable labels
 export const BAND_GAP = 84; // extra space between stages for the stage header
 export const TOP = 60;
 export const SPINE = 1.5; // the main path is centred between columns 1 and 2
